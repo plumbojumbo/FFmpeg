@@ -3,6 +3,7 @@
  *
  * Copyright (c) 2008 Maxim Poliakovski
  *               2008 Benjamin Larsson
+ *               2011 David Goldwich
  *
  * This file is part of FFmpeg.
  *
@@ -36,20 +37,19 @@
  * - Sound data organized in packets follow the EA3 header
  *   (can be encrypted using the Sony DRM!).
  *
- * LIMITATIONS: This version supports only plain (unencrypted) OMA files.
- * If any DRM-protected (encrypted) file is encountered you will get the
- * corresponding error message. Try to remove the encryption using any
- * Sony software (for example SonicStage).
  * CODEC SUPPORT: Only ATRAC3 codec is currently supported!
  */
 
 #include "avformat.h"
 #include "libavutil/intreadwrite.h"
+#include "libavutil/des.h"
 #include "pcm.h"
 #include "riff.h"
 #include "id3v2.h"
 
 #define EA3_HEADER_SIZE 96
+#define ID3v2_EA3_MAGIC "ea3"
+#define OMA_ENC_HEADER_SIZE 16
 
 enum {
     OMA_CODECID_ATRAC3  = 0,
@@ -65,7 +65,167 @@ static const AVCodecTag codec_oma_tags[] = {
     { CODEC_ID_MP3,     OMA_CODECID_MP3 },
 };
 
-#define ID3v2_EA3_MAGIC "ea3"
+typedef struct OMAContext {
+    AVClass *class;
+
+    uint64_t content_start;
+    int encrypted;
+
+    uint16_t keyring_size;
+    uint16_t ekb_size;
+    uint16_t id_size;
+    uint16_t signature_size;
+
+    uint32_t root_key_id;
+    uint8_t root_key[24];
+    uint8_t node_key[24];
+
+    uint8_t iv[8];
+    uint8_t master_key[8];
+    uint8_t signature_key[8];
+    uint8_t signature_mac[8];
+    uint8_t encryption_key[8];
+
+    struct AVDES av_des;
+} OMAContext;
+
+/**
+ * Write hex key to the log.
+ *
+ * @param level AV_LOG_* level
+ * @param name String put in front of the key
+ * @param value Pointer to the key
+ * @param len Length of the key in bytes
+ */
+static void key_log(AVFormatContext *s, int level, const char *name, const uint8_t *value, int len)
+{
+    char keybuf[33];
+    len = FFMIN(len, 16);
+    if (av_log_get_level() < level)
+        return;
+    ff_data_to_hex(keybuf, value, len, 1);
+    keybuf[len*2] = '\0';
+    av_log(s, level, "%s: %s\n", name, keybuf);
+}
+
+/**
+ * Set key(s) in the OMAContext
+ */
+static int key_set(AVFormatContext *s, const uint8_t *root_key, const uint8_t *node_key, int len)
+{
+    OMAContext *oc = s->priv_data;
+
+    if (!root_key && !node_key)
+        return -1;
+
+    len = FFMIN(len, 16);
+
+    /* two key triple DES EDE, use first 64 bits in the third round again */
+    if (root_key) {
+        if (root_key != oc->root_key) {
+            memset(oc->root_key, 0, 24);
+            memcpy(oc->root_key, root_key, len);
+        }
+        memcpy(&oc->root_key[16], root_key, 8);
+    }
+    if (node_key) {
+        if (node_key != oc->node_key) {
+            memset(oc->node_key, 0, 24);
+            memcpy(oc->node_key, node_key, len);
+        }
+        memcpy(&oc->node_key[16], node_key, 8);
+    }
+
+    return 0;
+}
+
+/**
+ * Validate a root key by calculating the CBC-MAC signature of the ID
+ * subobject and comparing it to the one stored in the encryption header.
+ * If the key is correct, the OMAContext in the AVFormatContext contains
+ * the right root, master and signature key.
+ *
+ * @param enc_header Pointer to the OMG_(BK)LSI encryption header
+ * @param root_key The root key to test
+ * @return 0 if the key is correct, -1 otherwise
+ */
+static int key_probe(AVFormatContext *s, uint8_t *enc_header, const uint8_t *root_key)
+{
+    OMAContext *oc = s->priv_data;
+    unsigned int pos;
+    struct AVDES av_des;
+
+    if (!enc_header || !root_key)
+        return -1;
+
+    key_log(s, AV_LOG_VERBOSE, "--- Trying root key", root_key, 16);
+
+    /* derive master key */
+    av_des_init(&av_des, root_key, 192, 1);
+    av_des_crypt(&av_des, oc->master_key, &enc_header[48], 1, NULL, 1);
+    key_log(s, AV_LOG_DEBUG, "Master key", oc->master_key, 8);
+
+    /* derive signature key */
+    av_des_init(&av_des, oc->master_key, 64, 0);
+    av_des_crypt(&av_des, oc->signature_key, NULL, 1, NULL, 0);
+    key_log(s, AV_LOG_DEBUG, "Signature key", oc->signature_key, 8);
+
+    /* verify signature key */
+    av_des_init(&av_des, oc->signature_key, 64, 0);
+    pos = OMA_ENC_HEADER_SIZE + oc->keyring_size + oc->ekb_size;
+    av_des_mac(&av_des, oc->signature_mac, &enc_header[pos], (oc->id_size >> 3));
+    key_log(s, AV_LOG_DEBUG, "CBC-MAC", oc->signature_mac, 8);
+    pos += oc->id_size;
+
+    if (memcmp(&enc_header[pos], oc->signature_mac, 8)) {
+        av_log(s, AV_LOG_DEBUG, "-> mismatch\n");
+        return -1;
+    }
+
+    av_log(s, AV_LOG_DEBUG, "-> match\n");
+
+    return 0;
+}
+
+/**
+ * Try to find an entry point in the EKB for the specified node key.
+ * If a valid root key could be restored, the OMAContext in s contains
+ * the right root, master and signature keys.
+ *
+ * @param enc_header Pointer to the OMG_(BK)LSI encryption header
+ * @param node_key The node key to test
+ * @return 0 if a valid root key was found, -1 otherwise
+ */
+static int key_find(AVFormatContext *s, uint8_t *enc_header, const uint8_t *node_key)
+{
+    OMAContext *oc = s->priv_data;
+    uint32_t pos, datalen;
+    struct AVDES av_des;
+
+    if (!enc_header || !node_key)
+        return -1;
+
+    pos = OMA_ENC_HEADER_SIZE + oc->keyring_size;
+    if (!memcmp(&enc_header[pos], "EKB ", 4))
+        pos += 32;
+
+    if (AV_RB32(&enc_header[pos]) != oc->root_key_id)
+        av_log(s, AV_LOG_WARNING, "Mismatching root key IDs in EKB and header");
+
+    datalen = AV_RB32(&enc_header[pos+36]) >> 4;
+    pos += 56;
+
+    av_des_init(&av_des, node_key, 192, 1);
+    while (datalen-- > 0) {
+        av_des_crypt(&av_des, oc->root_key, &enc_header[pos], 2, NULL, 1);
+        key_set(s, oc->root_key, NULL, 16);
+        if (!key_probe(s, enc_header, oc->root_key))
+            return 0;
+        pos += 16;
+    }
+
+    return -1;
+}
 
 static int oma_read_header(AVFormatContext *s,
                            AVFormatParameters *ap)
@@ -77,21 +237,99 @@ static int oma_read_header(AVFormatContext *s,
     uint8_t buf[EA3_HEADER_SIZE];
     uint8_t *edata;
     AVStream *st;
+    ID3v2ExtraMeta *extra_meta = NULL;
+    ID3v2ExtraMetaGEOB *geob = NULL;
+    uint8_t *gdata;
+    OMAContext *oc = s->priv_data;
 
-    ff_id3v2_read(s, ID3v2_EA3_MAGIC);
+    ff_id3v2_read_all(s, ID3v2_EA3_MAGIC, &extra_meta);
     ret = avio_read(s->pb, buf, EA3_HEADER_SIZE);
     if (ret < EA3_HEADER_SIZE)
         return -1;
 
     if (memcmp(buf, ((const uint8_t[]){'E', 'A', '3'}),3) || buf[4] != 0 || buf[5] != EA3_HEADER_SIZE) {
-        av_log(s, AV_LOG_ERROR, "Couldn't find the EA3 header !\n");
+        av_log(s, AV_LOG_ERROR, "Couldn't find the EA3 header!\n");
         return -1;
     }
 
+    oc->content_start = avio_tell(s->pb);
+
     eid = AV_RB16(&buf[6]);
     if (eid != -1 && eid != -128) {
-        av_log(s, AV_LOG_ERROR, "Encrypted file! Eid: %d\n", eid);
-        return -1;
+        /* encrypted file */
+
+        ID3v2ExtraMeta *em = extra_meta;
+
+        oc->encrypted = 1;
+        av_log(s, AV_LOG_INFO, "File is encrypted\n");
+
+        if (s->keylen > 0) {
+            /* user-supplied key */
+            key_set(s, s->key, s->key, s->keylen);
+        } else {
+            av_log(s, AV_LOG_ERROR, "Root or node key needed to decrypt file, use -cryptokey option to supply one\n");
+            return -1;
+        }
+
+        /* find GEOB metadata */
+        while (em) {
+            if (!strcmp(em->tag, "GEOB") &&
+                (geob = em->data) &&
+                !strcmp(geob->description, "OMG_LSI") ||
+                !strcmp(geob->description, "OMG_BKLSI")) {
+                     break;
+            }
+            em = em->next;
+        }
+        if (!em) {
+            av_log(s, AV_LOG_ERROR, "No encryption header found\n");
+            return -1;
+        }
+
+        if (geob->datasize < 64) {
+            av_log(s, AV_LOG_ERROR, "Invalid GEOB data size: %u\n", geob->datasize);
+            return -1;
+        }
+
+        gdata = geob->data;
+
+        if (AV_RB16(gdata) != 1)
+            av_log(s, AV_LOG_WARNING, "Unknown version in OMG encryption header\n");
+
+        oc->keyring_size    = AV_RB16(&gdata[2]);
+        oc->ekb_size        = AV_RB16(&gdata[4]);
+        oc->id_size         = AV_RB16(&gdata[6]);
+        oc->signature_size  = AV_RB16(&gdata[8]);
+
+        if (memcmp(&gdata[OMA_ENC_HEADER_SIZE], "KEYRING     ", 12)) {
+            av_log(s, AV_LOG_ERROR, "Invalid keyring subobject.\n");
+            return -1;
+        }
+        oc->root_key_id = AV_RB32(&gdata[OMA_ENC_HEADER_SIZE + 28]);
+        av_log(s, AV_LOG_VERBOSE, "EKB root key ID: 0x%.8x\n", oc->root_key_id);
+
+        memcpy(oc->iv, &buf[0x58], 8);
+        key_log(s, AV_LOG_VERBOSE, "IV", oc->iv, 8);
+
+        key_log(s, AV_LOG_VERBOSE, "CBC-MAC signature", &gdata[OMA_ENC_HEADER_SIZE+oc->keyring_size+oc->ekb_size+oc->id_size], 8);
+
+        if (!memcmp(oc->root_key, (const uint8_t[8]){0}, 8) ||
+                key_probe(s, gdata, oc->root_key) < 0) {
+            key_log(s, AV_LOG_VERBOSE, "Using node key", oc->node_key, 16);
+            if (key_find(s, gdata, oc->node_key) < 0) {
+                av_log(s, AV_LOG_ERROR, "No valid encryption key found\n");
+                return -1;
+            }
+        }
+
+        /* derive encryption key */
+        av_des_init(&oc->av_des, oc->master_key, 64, 0);
+        av_des_crypt(&oc->av_des, oc->encryption_key, &gdata[OMA_ENC_HEADER_SIZE + 40], 1, NULL, 0);
+        key_log(s, AV_LOG_VERBOSE, "Content encryption key", oc->encryption_key, 8);
+        av_log(s, AV_LOG_VERBOSE, "Key recovery successful\n");
+
+        /* init content encryption key */
+        av_des_init(&oc->av_des, oc->encryption_key, 64, 1);
     }
 
     codec_params = AV_RB24(&buf[33]);
@@ -153,17 +391,27 @@ static int oma_read_header(AVFormatContext *s,
 
     st->codec->block_align = framesize;
 
+    ff_id3v2_free_extra_meta(&extra_meta);
+
     return 0;
 }
 
 
 static int oma_read_packet(AVFormatContext *s, AVPacket *pkt)
 {
-    int ret = av_get_packet(s->pb, pkt, s->streams[0]->codec->block_align);
+    OMAContext *oc = s->priv_data;
+    int packet_size = s->streams[0]->codec->block_align;
+    int ret = av_get_packet(s->pb, pkt, packet_size);
 
-    pkt->stream_index = 0;
     if (ret <= 0)
         return AVERROR(EIO);
+
+    pkt->stream_index = 0;
+
+    if (oc->encrypted) {
+        /* last unencrypted block saved in IV for the next packet (CBC mode) */
+        av_des_crypt(&oc->av_des, pkt->data, pkt->data, (packet_size >> 3), oc->iv, 1);
+    }
 
     return ret;
 }
@@ -190,16 +438,38 @@ static int oma_read_probe(AVProbeData *p)
         return 0;
 }
 
+static int oma_read_seek(struct AVFormatContext *s, int stream_index, int64_t timestamp, int flags)
+{
+    OMAContext *oc = s->priv_data;
+
+    pcm_read_seek(s, stream_index, timestamp, flags);
+
+    if (oc->encrypted) {
+        /* readjust IV for CBC */
+        int64_t pos = avio_tell(s->pb);
+        if (pos < oc->content_start)
+            memset(oc->iv, 0, 8);
+        else {
+            if (avio_seek(s->pb, -8, SEEK_CUR) < 0 || avio_read(s->pb, oc->iv, 8) < 8) {
+                memset(oc->iv, 0, 8);
+                return -1;
+            }
+        }
+    }
+
+    return 0;
+}
 
 AVInputFormat ff_oma_demuxer = {
     .name           = "oma",
     .long_name      = NULL_IF_CONFIG_SMALL("Sony OpenMG audio"),
+    .priv_data_size = sizeof(OMAContext),
     .read_probe     = oma_read_probe,
     .read_header    = oma_read_header,
     .read_packet    = oma_read_packet,
-    .read_seek      = pcm_read_seek,
-    .flags= AVFMT_GENERIC_INDEX,
-    .extensions = "oma,aa3",
-    .codec_tag= (const AVCodecTag* const []){codec_oma_tags, 0},
+    .read_seek      = oma_read_seek,
+    .flags          = AVFMT_GENERIC_INDEX,
+    .extensions     = "oma,aa3",
+    .codec_tag      = (const AVCodecTag* const []){codec_oma_tags, 0},
 };
 
