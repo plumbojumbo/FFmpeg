@@ -66,8 +66,6 @@ static const AVCodecTag codec_oma_tags[] = {
 };
 
 typedef struct OMAContext {
-    AVClass *class;
-
     uint64_t content_start;
     int encrypted;
 
