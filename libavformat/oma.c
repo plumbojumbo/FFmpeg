@@ -65,6 +65,12 @@ static const AVCodecTag codec_oma_tags[] = {
     { CODEC_ID_MP3,     OMA_CODECID_MP3 },
 };
 
+const uint64_t leaf_table[] = {
+    0xd79e8283acea4620, 0x7a9762f445afd0d8,
+    0x354d60a60b8c79f1, 0x584e1cde00b07aee,
+    0x1573cd93da7df623, 0x47f98d79620dd535
+};
+
 typedef struct OMAContext {
     uint64_t content_start;
     int encrypted;
@@ -216,13 +222,6 @@ static int oma_read_header(AVFormatContext *s,
         oc->encrypted = 1;
         av_log(s, AV_LOG_INFO, "File is encrypted\n");
 
-        if (s->keylen > 0) {
-            kset(s, s->key, s->key, s->keylen);
-        } else {
-            av_log(s, AV_LOG_ERROR, "Key needed to decrypt file, use -cryptokey option to supply one\n");
-            return -1;
-        }
-
         /* find GEOB metadata */
         while (em) {
             if (!strcmp(em->tag, "GEOB") &&
@@ -265,9 +264,22 @@ static int oma_read_header(AVFormatContext *s,
 
         hex_log(s, AV_LOG_DEBUG, "CBC-MAC", &gdata[OMA_ENC_HEADER_SIZE+oc->k_size+oc->e_size+oc->i_size], 8);
 
+        if (s->keylen > 0) {
+            kset(s, s->key, s->key, s->keylen);
+        }
         if (!memcmp(oc->r_val, (const uint8_t[8]){0}, 8) ||
-                rprobe(s, gdata, oc->r_val) < 0) {
-            if (nprobe(s, gdata, oc->n_val) < 0) {
+                rprobe(s, gdata, oc->r_val) < 0 &&
+                nprobe(s, gdata, oc->n_val) < 0) {
+            int i;
+            for (i = 0; i < sizeof(leaf_table); i += 2) {
+                uint8_t buf[16];
+                AV_WL64(buf, leaf_table[i]);
+                AV_WL64(&buf[8], leaf_table[i+1]);
+                kset(s, buf, buf, 16);
+                if (!rprobe(s, gdata, oc->r_val) || !nprobe(s, gdata, oc->n_val))
+                    break;
+            }
+            if (i >= sizeof(leaf_table)) {
                 av_log(s, AV_LOG_ERROR, "Invalid key\n");
                 return -1;
             }
