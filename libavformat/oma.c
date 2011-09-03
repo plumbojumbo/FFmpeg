@@ -65,7 +65,7 @@ static const AVCodecTag codec_oma_tags[] = {
     { CODEC_ID_MP3,     OMA_CODECID_MP3 },
 };
 
-const uint64_t leaf_table[] = {
+static const uint64_t leaf_table[] = {
     0xd79e8283acea4620, 0x7a9762f445afd0d8,
     0x354d60a60b8c79f1, 0x584e1cde00b07aee,
     0x1573cd93da7df623, 0x47f98d79620dd535
