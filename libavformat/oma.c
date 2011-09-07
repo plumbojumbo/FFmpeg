@@ -158,7 +158,7 @@ static int rprobe(AVFormatContext *s, uint8_t *enc_header, const uint8_t *r_val)
 static int nprobe(AVFormatContext *s, uint8_t *enc_header, const uint8_t *n_val)
 {
     OMAContext *oc = s->priv_data;
-    uint32_t pos, datalen;
+    uint32_t pos, taglen, datalen;
     struct AVDES av_des;
 
     if (!enc_header || !n_val)
@@ -171,8 +171,10 @@ static int nprobe(AVFormatContext *s, uint8_t *enc_header, const uint8_t *n_val)
     if (AV_RB32(&enc_header[pos]) != oc->rid)
         av_log(s, AV_LOG_DEBUG, "Mismatching RID\n");
 
+    taglen = AV_RB32(&enc_header[pos+32]);
     datalen = AV_RB32(&enc_header[pos+36]) >> 4;
-    pos += 56;
+
+    pos += 44 + taglen;
 
     av_des_init(&av_des, n_val, 192, 1);
     while (datalen-- > 0) {
