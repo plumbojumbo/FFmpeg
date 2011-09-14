@@ -298,7 +298,7 @@ static int oma_read_header(AVFormatContext *s,
 
         /* init e_val */
         av_des_init(&oc->av_des, oc->e_val, 64, 1);
-        
+
         ff_id3v2_free_extra_meta(&extra_meta);
     }
 
