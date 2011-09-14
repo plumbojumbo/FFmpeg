@@ -26,6 +26,7 @@
  * http://id3.org/Developer_Information
  */
 
+#include <inttypes.h>
 #include "id3v2.h"
 #include "id3v1.h"
 #include "libavutil/avstring.h"
@@ -67,23 +68,45 @@ static unsigned int get_size(AVIOContext *s, int len)
 }
 
 /**
- * Decode content to UTF-8 according to encoding type
+ * Decode content to UTF-8 according to encoding type. Depending on the given
+ * taglen argument, either taglen bytes are read from the AVIOContext or until
+ * the first U+0000 character. The decoded buffer is always null terminated.
+ *
+ * @param dst Pointer where the address of the buffer with the decoded bytes is
+ * stored. Buffer must be freed by caller.
+ * @param dstlen Pointer to an int where the length of the decoded string
+ * is stored (in bytes, incl. null termination)
+ * @param taglen The length of the tag. If this is <0 then pb is read until a
+ * null character is found. Otherwise taglen bytes are read.
+ * @param key The tag frame key (for logging)
+ * @returns The number of bytes read from pb
  */
-static void decode_content(AVFormatContext *s, AVIOContext *pb, int type, char *dst, int dstlen, int taglen, const char *key)
+static unsigned int decode_str(AVFormatContext *s, AVIOContext *pb, int type,
+                               char **dst, int *dstlen, int taglen, const char *key)
 {
-    char *q;
-    int len;
+    int len = 0;
+    const int seeknull = (taglen < 0);
+    uint8_t tmp;
+    uint32_t ch = 1;
+    const uint64_t oldpos = avio_tell(pb);
     unsigned int (*get)(AVIOContext*) = avio_rb16;
+    AVIOContext *dynbuf;
+
+    if (!dst)
+        return 0;
+
+    if (avio_open_dyn_buf(&dynbuf)) {
+        av_log(s, AV_LOG_ERROR, "Error opening memory stream\n");
+        return 0;
+    }
 
     switch (type) { /* encoding type */
 
     case ID3v2_ENCODING_ISO8859:
-        q = dst;
-        while (taglen-- && q - dst < dstlen - 7) {
-            uint8_t tmp;
-            PUT_UTF8(avio_r8(pb), tmp, *q++ = tmp;)
+        while (!seeknull && taglen-- || seeknull && ch) {
+            ch = avio_r8(pb);
+            PUT_UTF8(ch, tmp, avio_w8(dynbuf, tmp);)
         }
-        *q = 0;
         break;
 
     case ID3v2_ENCODING_UTF16BOM:
@@ -95,30 +118,35 @@ static void decode_content(AVFormatContext *s, AVIOContext *pb, int type, char *
             break;
         default:
             av_log(s, AV_LOG_ERROR, "Incorrect BOM value in tag %s.\n", key);
-            return;
+            return 2;
         }
         // fall-through
 
     case ID3v2_ENCODING_UTF16BE:
-        q = dst;
-        while (taglen > 1 && q - dst < dstlen - 7) {
-            uint32_t ch;
-            uint8_t tmp;
-
-            GET_UTF16(ch, ((taglen -= 2) >= 0 ? get(pb) : 0), break;)
-            PUT_UTF8(ch, tmp, *q++ = tmp;)
+        while (!seeknull && taglen > 1 || seeknull && ch) {
+            GET_UTF16(ch, (seeknull || (taglen -= 2) >= 0 ? get(pb) : 0), break;)
+            PUT_UTF8(ch, tmp, avio_w8(dynbuf, tmp);)
         }
-        *q = 0;
         break;
 
     case ID3v2_ENCODING_UTF8:
-        len = FFMIN(taglen, dstlen);
-        avio_read(pb, dst, len);
-        dst[len] = 0;
+        while (!seeknull && taglen-- || seeknull && ch) {
+            ch = avio_r8(pb);
+            avio_w8(dynbuf, ch);
+        }
         break;
     default:
         av_log(s, AV_LOG_WARNING, "Unknown encoding in tag %s.\n", key);
     }
+
+    if (ch)
+        avio_w8(dynbuf, 0);
+
+    len = avio_close_dyn_buf(dynbuf, (uint8_t **)dst);
+    if (dstlen)
+        *dstlen = len;
+
+    return avio_tell(pb) - oldpos;
 }
 
 /**
@@ -126,18 +154,17 @@ static void decode_content(AVFormatContext *s, AVIOContext *pb, int type, char *
  */
 static void read_ttag(AVFormatContext *s, AVIOContext *pb, int taglen, const char *key)
 {
-    char dst[512];
+    char *dst;
     const char *val = NULL;
-    int len, dstlen = sizeof(dst) - 1;
+    int len, dstlen;
     unsigned genre;
 
-    dst[0] = 0;
     if (taglen < 1)
         return;
 
     taglen--; /* account for encoding type byte */
 
-    decode_content(s, pb, avio_r8(pb), dst, dstlen, taglen, key);
+    decode_str(s, pb, avio_r8(pb), &dst, &dstlen, taglen, key);
 
     if (!(strcmp(key, "TCON") && strcmp(key, "TCO"))
         && (sscanf(dst, "(%d)", &genre) == 1 || sscanf(dst, "%d", &genre) == 1)
@@ -155,6 +182,8 @@ static void read_ttag(AVFormatContext *s, AVIOContext *pb, int taglen, const cha
 
     if (val)
         av_dict_set(&s->metadata, key, val, AV_DICT_DONT_OVERWRITE);
+
+    av_free(dst);
 }
 
 /**
@@ -165,64 +194,35 @@ static void read_geobtag(AVFormatContext *s, AVIOContext *pb, int taglen, char *
     ID3v2ExtraMetaGEOB *geob_data;
     ID3v2ExtraMeta *new_extra;
     char encoding;
-    unsigned char buf[512];
     unsigned int len;
-    int64_t pos;
-    int (*get_str)(AVIOContext*, int, char*, int);
 
     if (taglen < 1)
         return;
 
     geob_data = av_mallocz(sizeof(ID3v2ExtraMetaGEOB));
     if (!geob_data) {
-        av_log(s, AV_LOG_ERROR, "Failed to alloc %d bytes\n", sizeof(ID3v2ExtraMetaGEOB));
+        av_log(s, AV_LOG_ERROR, "Failed to alloc %"PRIuPTR" bytes\n", sizeof(ID3v2ExtraMetaGEOB));
         return;
     }
 
     new_extra = av_mallocz(sizeof(ID3v2ExtraMeta));
     if (!new_extra) {
-        av_log(s, AV_LOG_ERROR, "Failed to alloc %d bytes\n", sizeof(ID3v2ExtraMeta));
+        av_log(s, AV_LOG_ERROR, "Failed to alloc %"PRIuPTR" bytes\n", sizeof(ID3v2ExtraMeta));
         return;
     }
 
     /* read encoding type byte */
     encoding = avio_r8(pb);
     taglen--;
-    switch (encoding) {
-        case ID3v2_ENCODING_ISO8859:
-        case ID3v2_ENCODING_UTF8:
-            get_str = avio_get_str;
-            break;
-        case ID3v2_ENCODING_UTF16BE:
-        case ID3v2_ENCODING_UTF16BOM:
-            get_str = avio_get_str16be;
-            break;
-        default:
-            av_log(s, AV_LOG_ERROR, "Unknown encoding in GEOB tag.\n");
-            return;
-    }
-
-    /* peek forward to figure out the length of the content part and decode it */
-#define PEEK_DECODE(get, key, encoding) \
-    pos = avio_tell(pb);\
-    len = get(pb, taglen, buf, sizeof(buf));\
-    geob_data->key = av_mallocz(len + 7);\
-    if (!geob_data->key) {\
-        av_log(s, AV_LOG_ERROR, "Failed to alloc %d bytes\n", len + 7);\
-        return;\
-    }\
-    avio_seek(pb, pos, SEEK_SET);\
-    decode_content(s, pb, encoding, geob_data->key, len + 7, len, "GEOB");\
-    taglen -= len;\
 
     /* read MIME type (always ISO-8859) and save as UTF-8 */
-    PEEK_DECODE(avio_get_str, mime_type, ID3v2_ENCODING_ISO8859)
+    taglen -= decode_str(s, pb, ID3v2_ENCODING_ISO8859, &geob_data->mime_type, NULL, -1, "GEOB");
 
     /* read file name and save as UTF-8 */
-    PEEK_DECODE(get_str, file_name, encoding)
+    taglen -= decode_str(s, pb, encoding, &geob_data->file_name, NULL, -1, "GEOB");
 
     /* read content description and save as UTF-8 */
-    PEEK_DECODE(get_str, description, encoding)
+    taglen -= decode_str(s, pb, encoding, &geob_data->description, NULL, -1, "GEOB");
 
     /* save encapsulated binary data */
     geob_data->data = av_malloc(taglen);
