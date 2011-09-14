@@ -236,11 +236,13 @@ static int oma_read_header(AVFormatContext *s,
         }
         if (!em) {
             av_log(s, AV_LOG_ERROR, "No encryption header found\n");
+            ff_id3v2_free_extra_meta(&extra_meta);
             return -1;
         }
 
         if (geob->datasize < 64) {
             av_log(s, AV_LOG_ERROR, "Invalid GEOB data size: %u\n", geob->datasize);
+            ff_id3v2_free_extra_meta(&extra_meta);
             return -1;
         }
 
@@ -256,6 +258,7 @@ static int oma_read_header(AVFormatContext *s,
 
         if (memcmp(&gdata[OMA_ENC_HEADER_SIZE], "KEYRING     ", 12)) {
             av_log(s, AV_LOG_ERROR, "Invalid encryption header\n");
+            ff_id3v2_free_extra_meta(&extra_meta);
             return -1;
         }
         oc->rid = AV_RB32(&gdata[OMA_ENC_HEADER_SIZE + 28]);
@@ -283,6 +286,7 @@ static int oma_read_header(AVFormatContext *s,
             }
             if (i >= sizeof(leaf_table)) {
                 av_log(s, AV_LOG_ERROR, "Invalid key\n");
+                ff_id3v2_free_extra_meta(&extra_meta);
                 return -1;
             }
         }
@@ -294,6 +298,8 @@ static int oma_read_header(AVFormatContext *s,
 
         /* init e_val */
         av_des_init(&oc->av_des, oc->e_val, 64, 1);
+        
+        ff_id3v2_free_extra_meta(&extra_meta);
     }
 
     codec_params = AV_RB24(&buf[33]);
@@ -354,8 +360,6 @@ static int oma_read_header(AVFormatContext *s,
     }
 
     st->codec->block_align = framesize;
-
-    ff_id3v2_free_extra_meta(&extra_meta);
 
     return 0;
 }
