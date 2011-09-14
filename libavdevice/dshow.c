@@ -19,15 +19,19 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include "libavformat/timefilter.h"
+#include "libavutil/opt.h"
 
 #include "avdevice.h"
 #include "dshow.h"
 
 struct dshow_ctx {
+    const AVClass *class;
+
     IGraphBuilder *graph;
 
     char *device_name[2];
+
+    int   list_devices;
 
     IBaseFilter *device_filter[2];
     IPin        *device_pin[2];
@@ -42,8 +46,6 @@ struct dshow_ctx {
     unsigned int video_frame_num;
 
     IMediaControl *control;
-
-    TimeFilter *timefilter;
 };
 
 static enum PixelFormat dshow_pixfmt(DWORD biCompression, WORD biBitCount)
@@ -96,11 +98,7 @@ dshow_read_close(AVFormatContext *s)
         IMediaControl_Stop(ctx->control);
         IMediaControl_Release(ctx->control);
     }
-    if (ctx->graph)
-        IGraphBuilder_Release(ctx->graph);
 
-    /* FIXME remove filters from graph */
-    /* FIXME disconnect pins */
     if (ctx->capture_pin[VideoDevice])
         libAVPin_Release(ctx->capture_pin[VideoDevice]);
     if (ctx->capture_pin[AudioDevice])
@@ -118,6 +116,20 @@ dshow_read_close(AVFormatContext *s)
         IBaseFilter_Release(ctx->device_filter[VideoDevice]);
     if (ctx->device_filter[AudioDevice])
         IBaseFilter_Release(ctx->device_filter[AudioDevice]);
+
+    if (ctx->graph) {
+        IEnumFilters *fenum;
+        int r;
+        r = IGraphBuilder_EnumFilters(ctx->graph, &fenum);
+        if (r == S_OK) {
+            IBaseFilter *f;
+            IEnumFilters_Reset(fenum);
+            while (IEnumFilters_Next(fenum, 1, &f, NULL) == S_OK)
+                IGraphBuilder_RemoveFilter(ctx->graph, f);
+            IEnumFilters_Release(fenum);
+        }
+        IGraphBuilder_Release(ctx->graph);
+    }
 
     if (ctx->device_name[0])
         av_free(ctx->device_name[0]);
@@ -207,36 +219,33 @@ fail:
     return;
 }
 
+/**
+ * Cycle through available devices using the device enumerator devenum,
+ * retrieve the device with type specified by devtype and return the
+ * pointer to the object found in *pfilter.
+ * If pfilter is NULL, list all device names.
+ */
 static int
-dshow_open_device(AVFormatContext *avctx, ICreateDevEnum *devenum,
-                  enum dshowDeviceType devtype)
+dshow_cycle_devices(AVFormatContext *avctx, ICreateDevEnum *devenum,
+                    enum dshowDeviceType devtype, IBaseFilter **pfilter)
 {
     struct dshow_ctx *ctx = avctx->priv_data;
     IBaseFilter *device_filter = NULL;
     IEnumMoniker *classenum = NULL;
-    IGraphBuilder *graph = ctx->graph;
-    IEnumPins *pins = 0;
     IMoniker *m = NULL;
-    IPin *device_pin = NULL;
-    libAVPin *capture_pin = NULL;
-    libAVFilter *capture_filter = NULL;
     const char *device_name = ctx->device_name[devtype];
-    int ret = AVERROR(EIO);
-    IPin *pin;
-    int r, i;
+    int r;
 
     const GUID *device_guid[2] = { &CLSID_VideoInputDeviceCategory,
                                    &CLSID_AudioInputDeviceCategory };
-    const GUID *mediatype[2] = { &MEDIATYPE_Video, &MEDIATYPE_Audio };
     const char *devtypename = (devtype == VideoDevice) ? "video" : "audio";
-    const wchar_t *filter_name[2] = { L"Audio capture filter", L"Video capture filter" };
 
     r = ICreateDevEnum_CreateClassEnumerator(devenum, device_guid[devtype],
                                              (IEnumMoniker **) &classenum, 0);
     if (r != S_OK) {
         av_log(avctx, AV_LOG_ERROR, "Could not enumerate %s devices.\n",
                devtypename);
-        goto error;
+        return AVERROR(EIO);
     }
 
     while (IEnumMoniker_Next(classenum, 1, &m, NULL) == S_OK && !device_filter) {
@@ -255,10 +264,14 @@ dshow_open_device(AVFormatContext *avctx, ICreateDevEnum *devenum,
 
         buf = dup_wchar_to_utf8(var.bstrVal);
 
-        if (strcmp(device_name, buf))
-            goto fail1;
+        if (pfilter) {
+            if (strcmp(device_name, buf))
+                goto fail1;
 
-        IMoniker_BindToObject(m, 0, 0, &IID_IBaseFilter, (void *) &device_filter);
+            IMoniker_BindToObject(m, 0, 0, &IID_IBaseFilter, (void *) &device_filter);
+        } else {
+            av_log(avctx, AV_LOG_INFO, " \"%s\"\n", buf);
+        }
 
 fail1:
         if (buf)
@@ -268,11 +281,44 @@ fail1:
         IMoniker_Release(m);
     }
 
-    if (!device_filter) {
-        av_log(avctx, AV_LOG_ERROR, "Could not find %s device.\n",
-               devtypename);
+    IEnumMoniker_Release(classenum);
+
+    if (pfilter) {
+        if (!device_filter) {
+            av_log(avctx, AV_LOG_ERROR, "Could not find %s device.\n",
+                   devtypename);
+            return AVERROR(EIO);
+        }
+        *pfilter = device_filter;
+    }
+
+    return 0;
+}
+
+static int
+dshow_open_device(AVFormatContext *avctx, ICreateDevEnum *devenum,
+                  enum dshowDeviceType devtype)
+{
+    struct dshow_ctx *ctx = avctx->priv_data;
+    IBaseFilter *device_filter = NULL;
+    IGraphBuilder *graph = ctx->graph;
+    IEnumPins *pins = 0;
+    IPin *device_pin = NULL;
+    libAVPin *capture_pin = NULL;
+    libAVFilter *capture_filter = NULL;
+    int ret = AVERROR(EIO);
+    IPin *pin;
+    int r;
+
+    const GUID *mediatype[2] = { &MEDIATYPE_Video, &MEDIATYPE_Audio };
+    const char *devtypename = (devtype == VideoDevice) ? "video" : "audio";
+    const wchar_t *filter_name[2] = { L"Audio capture filter", L"Video capture filter" };
+
+    if ((r = dshow_cycle_devices(avctx, devenum, devtype, &device_filter)) < 0) {
+        ret = r;
         goto error;
     }
+
     ctx->device_filter [devtype] = device_filter;
 
     r = IGraphBuilder_AddFilter(graph, device_filter, NULL);
@@ -287,7 +333,6 @@ fail1:
         goto error;
     }
 
-    i = 0;
     while (IEnumPins_Next(pins, 1, &pin, NULL) == S_OK && !device_pin) {
         IKsPropertySet *p = NULL;
         IEnumMediaTypes *types;
@@ -366,8 +411,6 @@ next:
 error:
     if (pins)
         IEnumPins_Release(pins);
-    if (classenum)
-        IEnumMoniker_Release(classenum);
 
     return ret;
 }
@@ -525,7 +568,7 @@ static int dshow_read_header(AVFormatContext *avctx, AVFormatParameters *ap)
     int ret = AVERROR(EIO);
     int r;
 
-    if (!parse_device_name(avctx)) {
+    if (!ctx->list_devices && !parse_device_name(avctx)) {
         av_log(avctx, AV_LOG_ERROR, "Malformed dshow input string.\n");
         goto error;
     }
@@ -544,6 +587,15 @@ static int dshow_read_header(AVFormatContext *avctx, AVFormatParameters *ap)
                          &IID_ICreateDevEnum, (void **) &devenum);
     if (r != S_OK) {
         av_log(avctx, AV_LOG_ERROR, "Could not enumerate system devices.\n");
+        goto error;
+    }
+
+    if (ctx->list_devices) {
+        av_log(avctx, AV_LOG_INFO, "DirectShow video devices\n");
+        dshow_cycle_devices(avctx, devenum, VideoDevice, NULL);
+        av_log(avctx, AV_LOG_INFO, "DirectShow audio devices\n");
+        dshow_cycle_devices(avctx, devenum, AudioDevice, NULL);
+        ret = AVERROR_EXIT;
         goto error;
     }
 
@@ -634,6 +686,22 @@ static int dshow_read_packet(AVFormatContext *s, AVPacket *pkt)
     return pkt->size;
 }
 
+#define OFFSET(x) offsetof(struct dshow_ctx, x)
+#define DEC AV_OPT_FLAG_DECODING_PARAM
+static const AVOption options[] = {
+    { "list_devices", "list available devices", OFFSET(list_devices), FF_OPT_TYPE_INT, {.dbl=0}, 0, 1, DEC, "list_devices" },
+    { "true", "", 0, FF_OPT_TYPE_CONST, {.dbl=1}, 0, 0, DEC, "list_devices" },
+    { "false", "", 0, FF_OPT_TYPE_CONST, {.dbl=0}, 0, 0, DEC, "list_devices" },
+    { NULL },
+};
+
+static const AVClass dshow_class = {
+    .class_name = "DirectShow indev",
+    .item_name  = av_default_item_name,
+    .option     = options,
+    .version    = LIBAVUTIL_VERSION_INT,
+};
+
 AVInputFormat ff_dshow_demuxer = {
     "dshow",
     NULL_IF_CONFIG_SMALL("DirectShow capture"),
@@ -643,4 +711,5 @@ AVInputFormat ff_dshow_demuxer = {
     dshow_read_packet,
     dshow_read_close,
     .flags = AVFMT_NOFILE,
+    .priv_class = &dshow_class,
 };

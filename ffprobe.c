@@ -58,6 +58,11 @@ static const char *unit_hertz_str           = "Hz"   ;
 static const char *unit_byte_str            = "byte" ;
 static const char *unit_bit_per_second_str  = "bit/s";
 
+void exit_program(int ret)
+{
+    exit(ret);
+}
+
 static char *value_string(char *buf, int buf_size, double val, const char *unit)
 {
     if (unit == unit_second_str && use_value_sexagesimal_format) {
@@ -130,12 +135,92 @@ struct writer {
     const char *items_sep;          ///< separator between sets of key/value couples
     const char *section_sep;        ///< separator between sections (streams, packets, ...)
     const char *header, *footer;
+    void (*print_section_start)(const char *, int);
+    void (*print_section_end)  (const char *, int);
     void (*print_header)(const char *);
     void (*print_footer)(const char *);
-    void (*print_fmt_f)(const char *, const char *, ...);
-    void (*print_int_f)(const char *, int);
+    void (*print_integer)(const char *, int);
+    void (*print_string)(const char *, const char *);
     void (*show_tags)(struct writer *w, AVDictionary *dict);
 };
+
+
+/* JSON output */
+
+static void json_print_header(const char *section)
+{
+    printf("{\n");
+}
+
+static char *json_escape_str(const char *s)
+{
+    static const char json_escape[] = {'"', '\\', '\b', '\f', '\n', '\r', '\t', 0};
+    static const char json_subst[]  = {'"', '\\',  'b',  'f',  'n',  'r',  't', 0};
+    char *ret, *p;
+    int i, len = 0;
+
+    // compute the length of the escaped string
+    for (i = 0; s[i]; i++) {
+        if (strchr(json_escape, s[i]))     len += 2; // simple escape
+        else if ((unsigned char)s[i] < 32) len += 6; // handle non-printable chars
+        else                               len += 1; // char copy
+    }
+
+    p = ret = av_malloc(len + 1);
+    if (!p)
+        return NULL;
+    for (i = 0; s[i]; i++) {
+        char *q = strchr(json_escape, s[i]);
+        if (q) {
+            *p++ = '\\';
+            *p++ = json_subst[q - json_escape];
+        } else if ((unsigned char)s[i] < 32) {
+            snprintf(p, 7, "\\u00%02x", s[i] & 0xff);
+            p += 6;
+        } else {
+            *p++ = s[i];
+        }
+    }
+    *p = 0;
+    return ret;
+}
+
+static void json_print_str(const char *key, const char *value)
+{
+    char *key_esc   = json_escape_str(key);
+    char *value_esc = json_escape_str(value);
+    printf("    \"%s\": \"%s\"",
+           key_esc   ? key_esc   : "",
+           value_esc ? value_esc : "");
+    av_free(key_esc);
+    av_free(value_esc);
+}
+
+static void json_print_int(const char *key, int value)
+{
+    char *key_esc = json_escape_str(key);
+    printf("    \"%s\": %d", key_esc ? key_esc : "", value);
+    av_free(key_esc);
+}
+
+static void json_print_footer(const char *section)
+{
+    printf("\n  }");
+}
+
+static void json_print_section_start(const char *section, int multiple_entries)
+{
+    char *section_esc = json_escape_str(section);
+    printf("\n  \"%s\":%s", section_esc ? section_esc : "",
+           multiple_entries ? " [" : " ");
+    av_free(section_esc);
+}
+
+static void json_print_section_end(const char *section, int multiple_entries)
+{
+    if (multiple_entries)
+        printf("]");
+}
 
 
 /* Default output */
@@ -145,13 +230,9 @@ static void default_print_header(const char *section)
     printf("[%s]\n", section);
 }
 
-static void default_print_fmt(const char *key, const char *fmt, ...)
+static void default_print_str(const char *key, const char *value)
 {
-    va_list ap;
-    va_start(ap, fmt);
-    printf("%s=", key);
-    vprintf(fmt, ap);
-    va_end(ap);
+    printf("%s=%s", key, value);
 }
 
 static void default_print_int(const char *key, int value)
@@ -167,14 +248,54 @@ static void default_print_footer(const char *section)
 
 /* Print helpers */
 
-#define print_fmt0(k, f, a...) w->print_fmt_f(k, f, ##a)
-#define print_fmt( k, f, a...) do {   \
-    if (w->item_sep)                  \
-        printf("%s", w->item_sep);    \
-    w->print_fmt_f(k, f, ##a);        \
+struct print_buf {
+    char *s;
+    int len;
+};
+
+static char *fast_asprintf(struct print_buf *pbuf, const char *fmt, ...)
+{
+    va_list va;
+    int len;
+
+    va_start(va, fmt);
+    len = vsnprintf(NULL, 0, fmt, va);
+    va_end(va);
+    if (len < 0)
+        goto fail;
+
+    if (pbuf->len < len) {
+        char *p = av_realloc(pbuf->s, len + 1);
+        if (!p)
+            goto fail;
+        pbuf->s   = p;
+        pbuf->len = len;
+    }
+
+    va_start(va, fmt);
+    len = vsnprintf(pbuf->s, len + 1, fmt, va);
+    va_end(va);
+    if (len < 0)
+        goto fail;
+    return pbuf->s;
+
+fail:
+    av_freep(&pbuf->s);
+    pbuf->len = 0;
+    return NULL;
+}
+
+#define print_fmt0(k, f, ...) do {             \
+    if (fast_asprintf(&pbuf, f, __VA_ARGS__))  \
+        w->print_string(k, pbuf.s);            \
+} while (0)
+#define print_fmt( k, f, ...) do {     \
+    if (w->item_sep)                   \
+        printf("%s", w->item_sep);     \
+    print_fmt0(k, f, __VA_ARGS__);     \
 } while (0)
 
-#define print_int0(k, v) w->print_int_f(k, v)
+#define print_int0(k, v) w->print_integer(k, v)
 #define print_int( k, v) do {      \
     if (w->item_sep)               \
         printf("%s", w->item_sep); \
@@ -189,6 +310,7 @@ static void show_packet(struct writer *w, AVFormatContext *fmt_ctx, AVPacket *pk
 {
     char val_str[128];
     AVStream *st = fmt_ctx->streams[pkt->stream_index];
+    struct print_buf pbuf = {.s = NULL};
 
     if (packet_idx)
         printf("%s", w->items_sep);
@@ -205,6 +327,7 @@ static void show_packet(struct writer *w, AVFormatContext *fmt_ctx, AVPacket *pk
     print_fmt("pos",   "%"PRId64, pkt->pos);
     print_fmt("flags", "%c",      pkt->flags & AV_PKT_FLAG_KEY ? 'K' : '_');
     w->print_footer("PACKET");
+    av_free(pbuf.s);
     fflush(stdout);
 }
 
@@ -219,13 +342,36 @@ static void show_packets(struct writer *w, AVFormatContext *fmt_ctx)
         show_packet(w, fmt_ctx, &pkt, i++);
 }
 
+static void json_show_tags(struct writer *w, AVDictionary *dict)
+{
+    AVDictionaryEntry *tag = NULL;
+    struct print_buf pbuf = {.s = NULL};
+    int first = 1;
+
+    if (!dict)
+        return;
+    printf(",\n    \"tags\": {\n");
+    while ((tag = av_dict_get(dict, "", tag, AV_DICT_IGNORE_SUFFIX))) {
+        if (first) {
+            print_str0(tag->key, tag->value);
+            first = 0;
+        } else {
+            print_str(tag->key, tag->value);
+        }
+    }
+    printf("\n    }");
+    av_free(pbuf.s);
+}
+
 static void default_show_tags(struct writer *w, AVDictionary *dict)
 {
     AVDictionaryEntry *tag = NULL;
+    struct print_buf pbuf = {.s = NULL};
     while ((tag = av_dict_get(dict, "", tag, AV_DICT_IGNORE_SUFFIX))) {
         printf("\nTAG:");
         print_str0(tag->key, tag->value);
     }
+    av_free(pbuf.s);
 }
 
 static void show_stream(struct writer *w, AVFormatContext *fmt_ctx, int stream_idx)
@@ -235,6 +381,7 @@ static void show_stream(struct writer *w, AVFormatContext *fmt_ctx, int stream_i
     AVCodec *dec;
     char val_str[128];
     AVRational display_aspect_ratio;
+    struct print_buf pbuf = {.s = NULL};
 
     if (stream_idx)
         printf("%s", w->items_sep);
@@ -286,7 +433,7 @@ static void show_stream(struct writer *w, AVFormatContext *fmt_ctx, int stream_i
             break;
         }
     } else {
-        print_fmt("codec_type", "unknown");
+        print_str("codec_type", "unknown");
     }
 
     if (fmt_ctx->iformat->flags & AVFMT_SHOW_IDS)
@@ -302,6 +449,7 @@ static void show_stream(struct writer *w, AVFormatContext *fmt_ctx, int stream_i
     w->show_tags(w, stream->metadata);
 
     w->print_footer("STREAM");
+    av_free(pbuf.s);
     fflush(stdout);
 }
 
@@ -315,6 +463,7 @@ static void show_streams(struct writer *w, AVFormatContext *fmt_ctx)
 static void show_format(struct writer *w, AVFormatContext *fmt_ctx)
 {
     char val_str[128];
+    struct print_buf pbuf = {.s = NULL};
 
     w->print_header("FORMAT");
     print_str0("filename",        fmt_ctx->filename);
@@ -327,6 +476,7 @@ static void show_format(struct writer *w, AVFormatContext *fmt_ctx)
     print_str("bit_rate",         value_string(val_str, sizeof(val_str), fmt_ctx->bit_rate,  unit_bit_per_second_str));
     w->show_tags(w, fmt_ctx->metadata);
     w->print_footer("FORMAT");
+    av_free(pbuf.s);
     fflush(stdout);
 }
 
@@ -372,12 +522,12 @@ static int open_input_file(AVFormatContext **fmt_ctx_ptr, const char *filename)
     return 0;
 }
 
-#define WRITER_FUNC(func)                  \
-    .print_header = func ## _print_header, \
-    .print_footer = func ## _print_footer, \
-    .print_fmt_f  = func ## _print_fmt,    \
-    .print_int_f  = func ## _print_int,    \
-    .show_tags    = func ## _show_tags
+#define WRITER_FUNC(func)                   \
+    .print_header  = func ## _print_header, \
+    .print_footer  = func ## _print_footer, \
+    .print_integer = func ## _print_int,    \
+    .print_string  = func ## _print_str,    \
+    .show_tags     = func ## _show_tags
 
 static struct writer writers[] = {{
         .name         = "default",
@@ -386,6 +536,16 @@ static struct writer writers[] = {{
         .section_sep  = "\n",
         .footer       = "\n",
         WRITER_FUNC(default),
+    },{
+        .name         = "json",
+        .header       = "{",
+        .item_sep     = ",\n",
+        .items_sep    = ",",
+        .section_sep  = ",",
+        .footer       = "\n}\n",
+        .print_section_start = json_print_section_start,
+        .print_section_end   = json_print_section_end,
+        WRITER_FUNC(json),
     }
 };
 
@@ -400,9 +560,13 @@ static int get_writer(const char *name)
     return -1;
 }
 
-#define SECTION_PRINT(name, left) do {                        \
+#define SECTION_PRINT(name, multiple_entries, left) do {      \
     if (do_show_ ## name) {                                   \
+        if (w->print_section_start)                           \
+            w->print_section_start(#name, multiple_entries);  \
         show_ ## name (w, fmt_ctx);                           \
+        if (w->print_section_end)                             \
+            w->print_section_end(#name, multiple_entries);    \
         if (left)                                             \
             printf("%s", w->section_sep);                     \
     }                                                         \
@@ -427,9 +591,9 @@ static int probe_file(const char *filename)
     if (w->header)
         printf("%s", w->header);
 
-    SECTION_PRINT(packets, do_show_streams || do_show_format);
-    SECTION_PRINT(streams, do_show_format);
-    SECTION_PRINT(format,  0);
+    SECTION_PRINT(packets, 1, do_show_streams || do_show_format);
+    SECTION_PRINT(streams, 1, do_show_format);
+    SECTION_PRINT(format,  0, 0);
 
     if (w->footer)
         printf("%s", w->footer);
@@ -455,7 +619,7 @@ static int opt_format(const char *opt, const char *arg)
     return 0;
 }
 
-static int opt_input_file(const char *opt, const char *arg)
+static void opt_input_file(void *optctx, const char *arg)
 {
     if (input_filename) {
         fprintf(stderr, "Argument '%s' provided as input filename, but '%s' was already specified.\n",
@@ -465,16 +629,16 @@ static int opt_input_file(const char *opt, const char *arg)
     if (!strcmp(arg, "-"))
         arg = "pipe:";
     input_filename = arg;
-    return 0;
 }
 
 static int opt_help(const char *opt, const char *arg)
 {
+    const AVClass *class = avformat_get_class();
     av_log_set_callback(log_callback_help);
     show_usage();
     show_help_options(options, "Main options:\n", 0, 0);
     printf("\n");
-    av_opt_show2(avformat_opts, NULL,
+    av_opt_show2(&class, NULL,
                  AV_OPT_FLAG_DECODING_PARAM, 0);
     return 0;
 }
@@ -499,6 +663,7 @@ static const OptionDef options[] = {
       "use sexagesimal format HOURS:MM:SS.MICROSECONDS for time units" },
     { "pretty", 0, {(void*)&opt_pretty},
       "prettify the format of displayed values, make it more human readable" },
+    { "print_format", OPT_STRING | HAS_ARG, {(void*)&print_format}, "set the output printing format (available formats are: default, json)" },
     { "show_format",  OPT_BOOL, {(void*)&do_show_format} , "show format/container info" },
     { "show_packets", OPT_BOOL, {(void*)&do_show_packets}, "show packets info" },
     { "show_streams", OPT_BOOL, {(void*)&do_show_streams}, "show streams info" },
@@ -518,7 +683,7 @@ int main(int argc, char **argv)
 #endif
 
     show_banner();
-    parse_options(argc, argv, options, opt_input_file);
+    parse_options(NULL, argc, argv, options, opt_input_file);
 
     if (!input_filename) {
         show_usage();
@@ -528,8 +693,6 @@ int main(int argc, char **argv)
     }
 
     ret = probe_file(input_filename);
-
-    av_free(avformat_opts);
 
     return ret;
 }

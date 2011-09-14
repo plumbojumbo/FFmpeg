@@ -68,23 +68,33 @@ typedef struct VP8EncoderContext {
     int arnr_max_frames;
     int arnr_strength;
     int arnr_type;
+
+    int rc_lookahead;
+    int crf;
 } VP8Context;
 
 #define V AV_OPT_FLAG_VIDEO_PARAM
 #define E AV_OPT_FLAG_ENCODING_PARAM
 
 static const AVOption options[]={
-{"speed", "", offsetof(VP8Context, cpuused), FF_OPT_TYPE_INT, 3, -16, 16, V|E},
-{"quality", "", offsetof(VP8Context, deadline), FF_OPT_TYPE_INT, VPX_DL_GOOD_QUALITY, INT_MIN, INT_MAX, V|E, "quality"},
-{"best", NULL, 0, FF_OPT_TYPE_CONST, VPX_DL_BEST_QUALITY, INT_MIN, INT_MAX, V|E, "quality"},
-{"good", NULL, 0, FF_OPT_TYPE_CONST, VPX_DL_GOOD_QUALITY, INT_MIN, INT_MAX, V|E, "quality"},
-{"realtime", NULL, 0, FF_OPT_TYPE_CONST, VPX_DL_REALTIME, INT_MIN, INT_MAX, V|E, "quality"},
-{"vp8flags", "", offsetof(VP8Context, flags), FF_OPT_TYPE_FLAGS, 0, 0, UINT_MAX, V|E, "flags"},
-{"error_resilient", "enable error resilience", 0, FF_OPT_TYPE_CONST, VP8F_ERROR_RESILIENT, INT_MIN, INT_MAX, V|E, "flags"},
-{"altref", "enable use of alternate reference frames (VP8/2-pass only)", 0, FF_OPT_TYPE_CONST, VP8F_AUTO_ALT_REF, INT_MIN, INT_MAX, V|E, "flags"},
-{"arnr_max_frames", "altref noise reduction max frame count", offsetof(VP8Context, arnr_max_frames), FF_OPT_TYPE_INT, 0, 0, 15, V|E},
-{"arnr_strength", "altref noise reduction filter strength", offsetof(VP8Context, arnr_strength), FF_OPT_TYPE_INT, 3, 0, 6, V|E},
-{"arnr_type", "altref noise reduction filter type", offsetof(VP8Context, arnr_type), FF_OPT_TYPE_INT, 3, 1, 3, V|E},
+{"speed", "", offsetof(VP8Context, cpuused), FF_OPT_TYPE_INT, {.dbl = 3}, -16, 16, V|E},
+{"quality", "", offsetof(VP8Context, deadline), FF_OPT_TYPE_INT, {.dbl = VPX_DL_GOOD_QUALITY}, INT_MIN, INT_MAX, V|E, "quality"},
+{"best", NULL, 0, FF_OPT_TYPE_CONST, {.dbl = VPX_DL_BEST_QUALITY}, INT_MIN, INT_MAX, V|E, "quality"},
+{"good", NULL, 0, FF_OPT_TYPE_CONST, {.dbl = VPX_DL_GOOD_QUALITY}, INT_MIN, INT_MAX, V|E, "quality"},
+{"realtime", NULL, 0, FF_OPT_TYPE_CONST, {.dbl = VPX_DL_REALTIME}, INT_MIN, INT_MAX, V|E, "quality"},
+{"vp8flags", "", offsetof(VP8Context, flags), FF_OPT_TYPE_FLAGS, {.dbl = 0}, 0, UINT_MAX, V|E, "flags"},
+{"error_resilient", "enable error resilience", 0, FF_OPT_TYPE_CONST, {.dbl = VP8F_ERROR_RESILIENT}, INT_MIN, INT_MAX, V|E, "flags"},
+{"altref", "enable use of alternate reference frames (VP8/2-pass only)", 0, FF_OPT_TYPE_CONST, {.dbl = VP8F_AUTO_ALT_REF}, INT_MIN, INT_MAX, V|E, "flags"},
+{"arnr_max_frames", "altref noise reduction max frame count", offsetof(VP8Context, arnr_max_frames), FF_OPT_TYPE_INT, {.dbl = 0}, 0, 15, V|E},
+{"arnr_strength", "altref noise reduction filter strength", offsetof(VP8Context, arnr_strength), FF_OPT_TYPE_INT, {.dbl = 3}, 0, 6, V|E},
+{"arnr_type", "altref noise reduction filter type", offsetof(VP8Context, arnr_type), FF_OPT_TYPE_INT, {.dbl = 3}, 1, 3, V|E},
+#if FF_API_X264_GLOBAL_OPTS
+{"rc_lookahead", "Number of frames to look ahead for alternate reference frame selection", offsetof(VP8Context, rc_lookahead), FF_OPT_TYPE_INT, {.dbl = -1}, -1, 25, V|E},
+{"crf", "Select the quality for constant quality mode", offsetof(VP8Context, crf), FF_OPT_TYPE_INT, {.dbl = -1}, -1, 63, V|E},
+#else
+{"rc_lookahead", "Number of frames to look ahead for alternate reference frame selection", offsetof(VP8Context, rc_lookahead), FF_OPT_TYPE_INT, {.dbl = 25}, 0, 25, V|E},
+{"crf", "Select the quality for constant quality mode", offsetof(VP8Context, crf), FF_OPT_TYPE_INT, {.dbl = 0}, 0, 63, V|E},
+#endif
 {NULL}
 };
 static const AVClass class = { "libvpx", av_default_item_name, options, LIBAVUTIL_VERSION_INT };
@@ -261,7 +271,13 @@ static av_cold int vp8_init(AVCodecContext *avctx)
     enccfg.g_timebase.num = avctx->time_base.num;
     enccfg.g_timebase.den = avctx->time_base.den;
     enccfg.g_threads      = avctx->thread_count;
+#if FF_API_X264_GLOBAL_OPTS
     enccfg.g_lag_in_frames= FFMIN(avctx->rc_lookahead, 25);  //0-25, avoids init failure
+    if (ctx->rc_lookahead >= 0)
+        enccfg.g_lag_in_frames= ctx->rc_lookahead;
+#else
+    enccfg.g_lag_in_frames= ctx->rc_lookahead;
+#endif
 
     if (avctx->flags & CODEC_FLAG_PASS1)
         enccfg.g_pass = VPX_RC_FIRST_PASS;
@@ -273,7 +289,11 @@ static av_cold int vp8_init(AVCodecContext *avctx)
     if (avctx->rc_min_rate == avctx->rc_max_rate &&
         avctx->rc_min_rate == avctx->bit_rate)
         enccfg.rc_end_usage = VPX_CBR;
-    else if (avctx->crf)
+#if FF_API_X264_GLOBAL_OPTS
+    else if (avctx->crf || ctx->crf > 0)
+#else
+    else if (ctx->crf)
+#endif
         enccfg.rc_end_usage = VPX_CQ;
     enccfg.rc_target_bitrate = av_rescale_rnd(avctx->bit_rate, 1, 1000,
                                               AV_ROUND_NEAR_INF);
@@ -355,7 +375,13 @@ static av_cold int vp8_init(AVCodecContext *avctx)
     codecctl_int(avctx, VP8E_SET_NOISE_SENSITIVITY, avctx->noise_reduction);
     codecctl_int(avctx, VP8E_SET_TOKEN_PARTITIONS,  av_log2(avctx->slices));
     codecctl_int(avctx, VP8E_SET_STATIC_THRESHOLD,  avctx->mb_threshold);
+#if FF_API_X264_GLOBAL_OPTS
     codecctl_int(avctx, VP8E_SET_CQ_LEVEL,          (int)avctx->crf);
+    if (ctx->crf >= 0)
+        codecctl_int(avctx, VP8E_SET_CQ_LEVEL,      ctx->crf);
+#else
+    codecctl_int(avctx, VP8E_SET_CQ_LEVEL,          ctx->crf);
+#endif
     codecctl_int(avctx, VP8E_SET_ENABLEAUTOALTREF,  !!(ctx->flags & VP8F_AUTO_ALT_REF));
     codecctl_int(avctx, VP8E_SET_ARNR_MAXFRAMES,    ctx->arnr_max_frames);
     codecctl_int(avctx, VP8E_SET_ARNR_STRENGTH,     ctx->arnr_strength);

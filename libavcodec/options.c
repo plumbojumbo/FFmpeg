@@ -44,7 +44,7 @@ static const AVOption *opt_find(void *obj, const char *name, const char *unit, i
     AVCodecContext *s = obj;
     AVCodec        *c = NULL;
 
-    if (s->priv_data) {
+    if (!(search_flags & AV_OPT_SEARCH_FAKE_OBJ) && s->priv_data) {
         if (s->codec && s->codec->priv_class)
             return av_opt_find(s->priv_data, name, unit, opt_flags, search_flags);
         return NULL;
@@ -147,11 +147,11 @@ static const AVOption options[]={
 {"frame_number", NULL, OFFSET(frame_number), FF_OPT_TYPE_INT, {.dbl = DEFAULT }, INT_MIN, INT_MAX},
 {"delay", NULL, OFFSET(delay), FF_OPT_TYPE_INT, {.dbl = DEFAULT }, INT_MIN, INT_MAX},
 {"qcomp", "video quantizer scale compression (VBR)", OFFSET(qcompress), FF_OPT_TYPE_FLOAT, {.dbl = 0.5 }, -FLT_MAX, FLT_MAX, V|E},
-{"qblur", "video quantizer scale blur (VBR)", OFFSET(qblur), FF_OPT_TYPE_FLOAT, {.dbl = 0.5 }, 0, FLT_MAX, V|E},
-{"qmin", "min video quantizer scale (VBR)", OFFSET(qmin), FF_OPT_TYPE_INT, {.dbl = 2 }, 0, 69, V|E},
-{"qmax", "max video quantizer scale (VBR)", OFFSET(qmax), FF_OPT_TYPE_INT, {.dbl = 31 }, 0, 69, V|E},
+{"qblur", "video quantizer scale blur (VBR)", OFFSET(qblur), FF_OPT_TYPE_FLOAT, {.dbl = 0.5 }, -1, FLT_MAX, V|E},
+{"qmin", "min video quantizer scale (VBR)", OFFSET(qmin), FF_OPT_TYPE_INT, {.dbl = 2 }, -1, 69, V|E},
+{"qmax", "max video quantizer scale (VBR)", OFFSET(qmax), FF_OPT_TYPE_INT, {.dbl = 31 }, -1, 69, V|E},
 {"qdiff", "max difference between the quantizer scale (VBR)", OFFSET(max_qdiff), FF_OPT_TYPE_INT, {.dbl = 3 }, INT_MIN, INT_MAX, V|E},
-{"bf", "use 'frames' B frames", OFFSET(max_b_frames), FF_OPT_TYPE_INT, {.dbl = DEFAULT }, 0, FF_MAX_B_FRAMES, V|E},
+{"bf", "use 'frames' B frames", OFFSET(max_b_frames), FF_OPT_TYPE_INT, {.dbl = DEFAULT }, -1, FF_MAX_B_FRAMES, V|E},
 {"b_qfactor", "qp factor between p and b frames", OFFSET(b_quant_factor), FF_OPT_TYPE_FLOAT, {.dbl = 1.25 }, -FLT_MAX, FLT_MAX, V|E},
 {"rc_strategy", "ratecontrol method", OFFSET(rc_strategy), FF_OPT_TYPE_INT, {.dbl = DEFAULT }, INT_MIN, INT_MAX, V|E},
 {"b_strategy", "strategy to choose between I/P/B-frames", OFFSET(b_frame_strategy), FF_OPT_TYPE_INT, {.dbl = 0 }, INT_MIN, INT_MAX, V|E},
@@ -352,7 +352,7 @@ static const AVOption options[]={
 #endif
 {"qns", "quantizer noise shaping", OFFSET(quantizer_noise_shaping), FF_OPT_TYPE_INT, {.dbl = DEFAULT }, INT_MIN, INT_MAX, V|E},
 {"threads", NULL, OFFSET(thread_count), FF_OPT_TYPE_INT, {.dbl = 1 }, INT_MIN, INT_MAX, V|E|D},
-{"me_threshold", "motion estimaton threshold", OFFSET(me_threshold), FF_OPT_TYPE_INT, {.dbl = DEFAULT }, INT_MIN, INT_MAX},
+{"me_threshold", "motion estimaton threshold", OFFSET(me_threshold), FF_OPT_TYPE_INT, {.dbl = DEFAULT }, INT_MIN, INT_MAX, V|E},
 {"mb_threshold", "macroblock threshold", OFFSET(mb_threshold), FF_OPT_TYPE_INT, {.dbl = DEFAULT }, INT_MIN, INT_MAX, V|E},
 {"dc", "intra_dc_precision", OFFSET(intra_dc_precision), FF_OPT_TYPE_INT, {.dbl = 0 }, INT_MIN, INT_MAX, V|E},
 {"nssew", "nsse weight", OFFSET(nsse_weight), FF_OPT_TYPE_INT, {.dbl = 8 }, INT_MIN, INT_MAX, V|E},
@@ -398,10 +398,12 @@ static const AVOption options[]={
 {"keyint_min", "minimum interval between IDR-frames", OFFSET(keyint_min), FF_OPT_TYPE_INT, {.dbl = 25 }, INT_MIN, INT_MAX, V|E},
 {"refs", "reference frames to consider for motion compensation", OFFSET(refs), FF_OPT_TYPE_INT, {.dbl = 1 }, INT_MIN, INT_MAX, V|E},
 {"chromaoffset", "chroma qp offset from luma", OFFSET(chromaoffset), FF_OPT_TYPE_INT, {.dbl = DEFAULT }, INT_MIN, INT_MAX, V|E},
-{"bframebias", "influences how often B-frames are used", OFFSET(bframebias), FF_OPT_TYPE_INT, {.dbl = DEFAULT }, INT_MIN, INT_MAX, V|E},
-{"trellis", "rate-distortion optimal quantization", OFFSET(trellis), FF_OPT_TYPE_INT, {.dbl = DEFAULT }, INT_MIN, INT_MAX, V|A|E},
-{"directpred", "direct mv prediction mode - 0 (none), 1 (spatial), 2 (temporal), 3 (auto)", OFFSET(directpred), FF_OPT_TYPE_INT, {.dbl = 2 }, INT_MIN, INT_MAX, V|E},
 #if FF_API_X264_GLOBAL_OPTS
+{"bframebias", "influences how often B-frames are used", OFFSET(bframebias), FF_OPT_TYPE_INT, {.dbl = DEFAULT }, INT_MIN, INT_MAX, V|E},
+#endif
+{"trellis", "rate-distortion optimal quantization", OFFSET(trellis), FF_OPT_TYPE_INT, {.dbl = DEFAULT }, INT_MIN, INT_MAX, V|A|E},
+#if FF_API_X264_GLOBAL_OPTS
+{"directpred", "direct mv prediction mode - 0 (none), 1 (spatial), 2 (temporal), 3 (auto)", OFFSET(directpred), FF_OPT_TYPE_INT, {.dbl = -1 }, INT_MIN, INT_MAX, V|E},
 {"bpyramid", "allows B-frames to be used as references for predicting", 0, FF_OPT_TYPE_CONST, {.dbl = CODEC_FLAG2_BPYRAMID }, INT_MIN, INT_MAX, V|E, "flags2"},
 {"wpred", "weighted biprediction for b-frames (H.264)", 0, FF_OPT_TYPE_CONST, {.dbl = CODEC_FLAG2_WPRED }, INT_MIN, INT_MAX, V|E, "flags2"},
 {"mixed_refs", "one reference per partition, as opposed to one reference per macroblock", 0, FF_OPT_TYPE_CONST, {.dbl = CODEC_FLAG2_MIXED_REFS }, INT_MIN, INT_MAX, V|E, "flags2"},
@@ -410,7 +412,8 @@ static const AVOption options[]={
 {"aud", "access unit delimiters (H.264)", 0, FF_OPT_TYPE_CONST, {.dbl = CODEC_FLAG2_AUD }, INT_MIN, INT_MAX, V|E, "flags2"},
 #endif
 {"skiprd", "RD optimal MB level residual skipping", 0, FF_OPT_TYPE_CONST, {.dbl = CODEC_FLAG2_SKIP_RD }, INT_MIN, INT_MAX, V|E, "flags2"},
-{"complexityblur", "reduce fluctuations in qp (before curve compression)", OFFSET(complexityblur), FF_OPT_TYPE_FLOAT, {.dbl = 20.0 }, FLT_MIN, FLT_MAX, V|E},
+#if FF_API_X264_GLOBAL_OPTS
+{"complexityblur", "reduce fluctuations in qp (before curve compression)", OFFSET(complexityblur), FF_OPT_TYPE_FLOAT, {.dbl = -1 }, -1, FLT_MAX, V|E},
 {"deblockalpha", "in-loop deblocking filter alphac0 parameter", OFFSET(deblockalpha), FF_OPT_TYPE_INT, {.dbl = DEFAULT }, -6, 6, V|E},
 {"deblockbeta", "in-loop deblocking filter beta parameter", OFFSET(deblockbeta), FF_OPT_TYPE_INT, {.dbl = DEFAULT }, -6, 6, V|E},
 {"partitions", "macroblock subpartition sizes to consider", OFFSET(partitions), FF_OPT_TYPE_FLAGS, {.dbl = DEFAULT }, INT_MIN, INT_MAX, V|E, "partitions"},
@@ -419,6 +422,7 @@ static const AVOption options[]={
 {"partp4x4", NULL, 0, FF_OPT_TYPE_CONST, {.dbl = X264_PART_P4X4 }, INT_MIN, INT_MAX, V|E, "partitions"},
 {"partp8x8", NULL, 0, FF_OPT_TYPE_CONST, {.dbl = X264_PART_P8X8 }, INT_MIN, INT_MAX, V|E, "partitions"},
 {"partb8x8", NULL, 0, FF_OPT_TYPE_CONST, {.dbl = X264_PART_B8X8 }, INT_MIN, INT_MAX, V|E, "partitions"},
+#endif
 {"sc_factor", "multiplied by qscale for each frame and added to scene_change_score", OFFSET(scenechange_factor), FF_OPT_TYPE_INT, {.dbl = 6 }, 0, INT_MAX, V|E},
 {"mv0_threshold", NULL, OFFSET(mv0_threshold), FF_OPT_TYPE_INT, {.dbl = 256 }, 0, INT_MAX, V|E},
 #if FF_API_MPEGVIDEO_GLOBAL_OPTS
@@ -468,7 +472,7 @@ static const AVOption options[]={
 {"psy_trellis", "specify psycho visual trellis", OFFSET(psy_trellis), FF_OPT_TYPE_FLOAT, {.dbl = -1 }, -1, FLT_MAX, V|E},
 {"aq_mode", "specify aq method", OFFSET(aq_mode), FF_OPT_TYPE_INT, {.dbl = -1 }, -1, INT_MAX, V|E},
 {"aq_strength", "specify aq strength", OFFSET(aq_strength), FF_OPT_TYPE_FLOAT, {.dbl = -1.0 }, -1, FLT_MAX, V|E},
-{"rc_lookahead", "specify number of frames to look ahead for frametype", OFFSET(rc_lookahead), FF_OPT_TYPE_INT, {.dbl = 40 }, 0, INT_MAX, V|E},
+{"rc_lookahead", "specify number of frames to look ahead for frametype", OFFSET(rc_lookahead), FF_OPT_TYPE_INT, {.dbl = 40 }, -1, INT_MAX, V|E},
 {"ssim", "ssim will be calculated during encoding", 0, FF_OPT_TYPE_CONST, {.dbl = CODEC_FLAG2_SSIM }, INT_MIN, INT_MAX, V|E, "flags2"},
 {"intra_refresh", "use periodic insertion of intra blocks instead of keyframes", 0, FF_OPT_TYPE_CONST, {.dbl = CODEC_FLAG2_INTRA_REFRESH }, INT_MIN, INT_MAX, V|E, "flags2"},
 {"crf_max", "in crf mode, prevents vbv from lowering quality beyond this point", OFFSET(crf_max), FF_OPT_TYPE_FLOAT, {.dbl = DEFAULT }, 0, 51, V|E},
@@ -483,7 +487,7 @@ static const AVOption options[]={
 {"lpc_passes", "deprecated, use flac-specific options", OFFSET(lpc_passes), FF_OPT_TYPE_INT, {.dbl = -1 }, INT_MIN, INT_MAX, A|E},
 #endif
 {"slices", "number of slices, used in parallelized decoding", OFFSET(slices), FF_OPT_TYPE_INT, {.dbl = 0 }, 0, INT_MAX, V|E},
-{"thread_type", "select multithreading type", OFFSET(thread_type), FF_OPT_TYPE_INT, {.dbl = FF_THREAD_SLICE|FF_THREAD_FRAME }, 0, INT_MAX, V|E|D, "thread_type"},
+{"thread_type", "select multithreading type", OFFSET(thread_type), FF_OPT_TYPE_FLAGS, {.dbl = FF_THREAD_SLICE|FF_THREAD_FRAME }, 0, INT_MAX, V|E|D, "thread_type"},
 {"slice", NULL, 0, FF_OPT_TYPE_CONST, {.dbl = FF_THREAD_SLICE }, INT_MIN, INT_MAX, V|E|D, "thread_type"},
 {"frame", NULL, 0, FF_OPT_TYPE_CONST, {.dbl = FF_THREAD_FRAME }, INT_MIN, INT_MAX, V|E|D, "thread_type"},
 {"audio_service_type", "audio service type", OFFSET(audio_service_type), FF_OPT_TYPE_INT, {.dbl = AV_AUDIO_SERVICE_TYPE_MAIN }, 0, AV_AUDIO_SERVICE_TYPE_NB-1, A|E, "audio_service_type"},
@@ -661,4 +665,9 @@ fail:
     av_freep(&dest->extradata);
     av_freep(&dest->rc_eq);
     return AVERROR(ENOMEM);
+}
+
+const AVClass *avcodec_get_class(void)
+{
+    return &av_codec_context_class;
 }

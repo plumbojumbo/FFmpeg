@@ -97,7 +97,7 @@ static av_cold int movie_common_init(AVFilterContext *ctx, const char *args, voi
     int ret;
 
     movie->class = &movie_class;
-    av_opt_set_defaults2(movie, 0, 0);
+    av_opt_set_defaults(movie);
 
     if (args)
         movie->file_name = av_get_token(&args, ":");
@@ -424,9 +424,7 @@ static int amovie_get_samples(AVFilterLink *outlink)
     if (decoded_data_size > 0) {
         int nb_samples = decoded_data_size / movie->bps / movie->codec_ctx->channels;
         movie->samplesref =
-            avfilter_get_audio_buffer(outlink, AV_PERM_WRITE,
-                                      movie->codec_ctx->sample_fmt, nb_samples,
-                                      movie->codec_ctx->channel_layout, 0);
+            avfilter_get_audio_buffer(outlink, AV_PERM_WRITE, nb_samples);
         memcpy(movie->samplesref->data[0], movie->samples_buf, decoded_data_size);
         movie->samplesref->pts = movie->pkt.pts;
         movie->samplesref->pos = movie->pkt.pos;

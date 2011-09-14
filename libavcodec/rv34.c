@@ -1336,6 +1336,13 @@ static int rv34_decode_slice(RV34DecContext *r, int end, const uint8_t* buf, int
             }
         }
         s->mb_x = s->mb_y = 0;
+    } else {
+        int slice_type = r->si.type ? r->si.type : AV_PICTURE_TYPE_I;
+
+        if (slice_type != s->pict_type) {
+            av_log(s->avctx, AV_LOG_ERROR, "Slice type mismatch\n");
+            return AVERROR_INVALIDDATA;
+        }
     }
 
     r->si.end = end;
@@ -1484,7 +1491,7 @@ int ff_rv34_decode_frame(AVCodecContext *avctx,
         av_log(avctx, AV_LOG_ERROR, "Slice offset is greater than frame size\n");
         return -1;
     }
-    init_get_bits(&s->gb, buf+get_slice_offset(avctx, slices_hdr, 0), buf_size-get_slice_offset(avctx, slices_hdr, 0));
+    init_get_bits(&s->gb, buf+get_slice_offset(avctx, slices_hdr, 0), (buf_size-get_slice_offset(avctx, slices_hdr, 0))*8);
     if(r->parse_slice_header(r, &r->s.gb, &si) < 0 || si.start){
         av_log(avctx, AV_LOG_ERROR, "First slice header is incorrect\n");
         return -1;

@@ -46,6 +46,8 @@
 
 #define MAX_DELAYED_PIC_COUNT 16
 
+#define MAX_MBPAIR_SIZE (256*1024) // a tighter bound could be calculated if someone cares about a few bytes
+
 /* Compiling in interlaced support reduces the speed
  * of progressive decoding by about 2%. */
 #define ALLOW_INTERLACE
@@ -578,6 +580,8 @@ typedef struct H264Context{
     int initial_cpb_removal_delay[32]; ///< Initial timestamps for CPBs
 
     int cur_chroma_format_idc;
+
+    int16_t slice_row[MAX_SLICES]; ///< to detect when MAX_SLICES is too low
 }H264Context;
 
 

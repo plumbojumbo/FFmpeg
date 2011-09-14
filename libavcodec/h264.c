@@ -174,18 +174,22 @@ const uint8_t *ff_h264_decode_nal(H264Context *h, const uint8_t *src, int *dst_l
         i-= RS;
     }
 
-    if(i>=length-1){ //no escaped 0
-        *dst_length= length;
-        *consumed= length+1; //+1 for the header
-        return src;
-    }
-
     bufidx = h->nal_unit_type == NAL_DPC ? 1 : 0; // use second escape buffer for inter data
-    av_fast_malloc(&h->rbsp_buffer[bufidx], &h->rbsp_buffer_size[bufidx], length+FF_INPUT_BUFFER_PADDING_SIZE);
+    si=h->rbsp_buffer_size[bufidx];
+    av_fast_malloc(&h->rbsp_buffer[bufidx], &h->rbsp_buffer_size[bufidx], length+FF_INPUT_BUFFER_PADDING_SIZE+MAX_MBPAIR_SIZE);
     dst= h->rbsp_buffer[bufidx];
+    if(si != h->rbsp_buffer_size[bufidx])
+        memset(dst + length, 0, FF_INPUT_BUFFER_PADDING_SIZE+MAX_MBPAIR_SIZE);
 
     if (dst == NULL){
         return NULL;
+    }
+
+    if(i>=length-1){ //no escaped 0
+        *dst_length= length;
+        *consumed= length+1; //+1 for the header
+        memcpy(dst, src, length);
+        return dst;
     }
 
 //printf("decoding esc\n");
@@ -3012,7 +3016,13 @@ static int decode_slice_header(H264Context *h, H264Context *h0){
 
     h0->last_slice_type = slice_type;
     h->slice_num = ++h0->current_slice;
-    if(h->slice_num >= MAX_SLICES){
+
+    if(h->slice_num)
+        h0->slice_row[(h->slice_num-1)&(MAX_SLICES-1)]= s->resync_mb_y;
+    if (   h0->slice_row[h->slice_num&(MAX_SLICES-1)] + 3 >= s->resync_mb_y
+        && h0->slice_row[h->slice_num&(MAX_SLICES-1)] <= s->resync_mb_y
+        && h->slice_num >= MAX_SLICES) {
+        //in case of ASO this check needs to be updated depending on how we decide to assign slice numbers in this case
         av_log(s->avctx, AV_LOG_WARNING, "Possibly too many slices (%d >= %d), increase MAX_SLICES and recompile if there are artifacts\n", h->slice_num, MAX_SLICES);
     }
 
@@ -3642,7 +3652,7 @@ static int decode_nal_units(H264Context *h, const uint8_t *buf, int buf_size){
             s->workaround_bugs |= FF_BUG_TRUNCATED;
 
         if(!(s->workaround_bugs & FF_BUG_TRUNCATED)){
-        while(ptr[dst_length - 1] == 0 && dst_length > 0)
+        while(dst_length > 0 && ptr[dst_length - 1] == 0)
             dst_length--;
         }
         bit_length= !dst_length ? 0 : (8*dst_length - ff_h264_decode_rbsp_trailing(h, ptr + dst_length - 1));

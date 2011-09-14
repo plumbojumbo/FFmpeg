@@ -113,6 +113,7 @@ void av_register_all(void)
     REGISTER_DEMUXER  (IV8, iv8);
     REGISTER_MUXDEMUX (IVF, ivf);
     REGISTER_DEMUXER  (JV, jv);
+    REGISTER_MUXER    (LATM, latm);
     REGISTER_DEMUXER  (LMLM4, lmlm4);
     REGISTER_DEMUXER  (LOAS, loas);
     REGISTER_DEMUXER  (LXF, lxf);
@@ -225,7 +226,7 @@ void av_register_all(void)
     REGISTER_MUXER    (WEBM, webm);
     REGISTER_DEMUXER  (WSAUD, wsaud);
     REGISTER_DEMUXER  (WSVQA, wsvqa);
-    REGISTER_DEMUXER  (WTV, wtv);
+    REGISTER_MUXDEMUX (WTV, wtv);
     REGISTER_DEMUXER  (WV, wv);
     REGISTER_DEMUXER  (XA, xa);
     REGISTER_DEMUXER  (XMV, xmv);

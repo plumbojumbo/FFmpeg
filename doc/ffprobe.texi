@@ -60,7 +60,7 @@ are prefixed by the string "TAG:".
 @chapter Options
 @c man begin OPTIONS
 
-@include fftools-common-opts.texi
+@include avtools-common-opts.texi
 
 @section Main options
 
@@ -86,6 +86,10 @@ Use sexagesimal format HH:MM:SS.MICROSECONDS for time values.
 @item -pretty
 Prettify the format of the displayed values, it corresponds to the
 options "-unit -prefix -byte_binary_prefix -sexagesimal".
+
+@item -print_format @var{format}
+Set the output printing format.
+Current available formats are "default" and "json".
 
 @item -show_format
 Show information about the container format of the input multimedia

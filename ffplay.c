@@ -43,7 +43,7 @@
 # include "libavfilter/avcodec.h"
 # include "libavfilter/avfilter.h"
 # include "libavfilter/avfiltergraph.h"
-# include "libavfilter/vsink_buffer.h"
+# include "libavfilter/buffersink.h"
 #endif
 
 #include <SDL.h>
@@ -241,7 +241,6 @@ static int show_status = 1;
 static int av_sync_type = AV_SYNC_AUDIO_MASTER;
 static int64_t start_time = AV_NOPTS_VALUE;
 static int64_t duration = AV_NOPTS_VALUE;
-static int thread_count = 1;
 static int workaround_bugs = 1;
 static int fast = 0;
 static int genpts = 0;
@@ -276,6 +275,11 @@ static AVPacket flush_pkt;
 #define FF_QUIT_EVENT    (SDL_USEREVENT + 2)
 
 static SDL_Surface *screen;
+
+void exit_program(int ret)
+{
+    exit(ret);
+}
 
 static int packet_queue_put(PacketQueue *q, AVPacket *pkt)
 {
@@ -1129,7 +1133,7 @@ retry:
             }
             if((framedrop>0 || (framedrop && is->audio_st)) && time > next_target){
                 is->skip_frames *= 1.0 + FRAME_SKIP_FACTOR;
-                if(is->pictq_size > 1 || time > next_target + 0.5){
+                if(is->pictq_size > 1){
                     /* update queue size and signal for next picture */
                     if (++is->pictq_rindex == VIDEO_PICTURE_QUEUE_SIZE)
                         is->pictq_rindex = 0;
@@ -1680,6 +1684,7 @@ static int configure_video_filters(AVFilterGraph *graph, VideoState *is, const c
     char sws_flags_str[128];
     int ret;
     enum PixelFormat pix_fmts[] = { PIX_FMT_YUV420P, PIX_FMT_NONE };
+    AVBufferSinkParams *buffersink_params = av_buffersink_params_alloc();
     AVFilterContext *filt_src = NULL, *filt_out = NULL;
     snprintf(sws_flags_str, sizeof(sws_flags_str), "flags=%d", sws_flags);
     graph->scale_sws_opts = av_strdup(sws_flags_str);
@@ -1687,8 +1692,16 @@ static int configure_video_filters(AVFilterGraph *graph, VideoState *is, const c
     if ((ret = avfilter_graph_create_filter(&filt_src, &input_filter, "src",
                                             NULL, is, graph)) < 0)
         return ret;
-    if ((ret = avfilter_graph_create_filter(&filt_out, avfilter_get_by_name("buffersink"), "out",
-                                            NULL, pix_fmts, graph)) < 0)
+#if FF_API_OLD_VSINK_API
+    ret = avfilter_graph_create_filter(&filt_out, avfilter_get_by_name("buffersink"), "out",
+                                       NULL, pix_fmts, graph);
+#else
+    buffersink_params->pixel_fmts = pix_fmts;
+    ret = avfilter_graph_create_filter(&filt_out, avfilter_get_by_name("buffersink"), "out",
+                                       NULL, buffersink_params, graph);
+#endif
+    av_freep(&buffersink_params);
+    if (ret < 0)
         return ret;
 
     if(vfilters) {
@@ -1763,7 +1776,7 @@ static int video_thread(void *arg)
             last_w = is->video_st->codec->width;
             last_h = is->video_st->codec->height;
         }
-        ret = av_vsink_buffer_get_video_buffer_ref(filt_out, &picref, 0);
+        ret = av_buffersink_get_buffer_ref(filt_out, &picref, 0);
         if (picref) {
             avfilter_fill_frame_from_video_buffer_ref(frame, picref);
             pts_int = picref->pts;
@@ -2158,7 +2171,6 @@ static int stream_component_open(VideoState *is, int stream_index)
     avctx->skip_loop_filter= skip_loop_filter;
     avctx->error_recognition= error_recognition;
     avctx->error_concealment= error_concealment;
-    avctx->thread_count= thread_count;
 
     if(codec->capabilities & CODEC_CAP_DR1)
         avctx->flags |= CODEC_FLAG_EMU_EDGE;
@@ -2873,15 +2885,6 @@ static int opt_duration(const char *opt, const char *arg)
     return 0;
 }
 
-static int opt_thread_count(const char *opt, const char *arg)
-{
-    thread_count= parse_number_or_die(opt, arg, OPT_INT64, 0, INT_MAX);
-#if !HAVE_THREADS
-    fprintf(stderr, "Warning: not compiled with thread support, using thread emulation\n");
-#endif
-    return 0;
-}
-
 static int opt_show_mode(const char *opt, const char *arg)
 {
     show_mode = !strcmp(arg, "video") ? SHOW_MODE_VIDEO :
@@ -2891,18 +2894,19 @@ static int opt_show_mode(const char *opt, const char *arg)
     return 0;
 }
 
-static int opt_input_file(const char *opt, const char *filename)
+static void opt_input_file(void *optctx, const char *filename)
 {
     if (input_filename) {
         fprintf(stderr, "Argument '%s' provided as input filename, but '%s' was already specified.\n",
                 filename, input_filename);
-        exit(1);
+        exit_program(1);
     }
     if (!strcmp(filename, "-"))
         filename = "pipe:";
     input_filename = filename;
-    return 0;
 }
+
+static int dummy;
 
 static const OptionDef options[] = {
 #include "cmdutils_common_opts.h"
@@ -2934,7 +2938,6 @@ static const OptionDef options[] = {
     { "er", OPT_INT | HAS_ARG | OPT_EXPERT, {(void*)&error_recognition}, "set error detection threshold (0-4)",  "threshold" },
     { "ec", OPT_INT | HAS_ARG | OPT_EXPERT, {(void*)&error_concealment}, "set error concealment options",  "bit_mask" },
     { "sync", HAS_ARG | OPT_EXPERT, {(void*)opt_sync}, "set audio-video sync. type (type=audio/video/ext)", "type" },
-    { "threads", HAS_ARG | OPT_EXPERT, {(void*)opt_thread_count}, "thread count", "count" },
     { "autoexit", OPT_BOOL | OPT_EXPERT, {(void*)&autoexit}, "exit at the end", "" },
     { "exitonkeydown", OPT_BOOL | OPT_EXPERT, {(void*)&exit_on_keydown}, "exit on key down", "" },
     { "exitonmousedown", OPT_BOOL | OPT_EXPERT, {(void*)&exit_on_mousedown}, "exit on mouse down", "" },
@@ -2947,7 +2950,7 @@ static const OptionDef options[] = {
     { "rdftspeed", OPT_INT | HAS_ARG| OPT_AUDIO | OPT_EXPERT, {(void*)&rdftspeed}, "rdft speed", "msecs" },
     { "showmode", HAS_ARG, {(void*)opt_show_mode}, "select show mode (0 = video, 1 = waves, 2 = RDFT)", "mode" },
     { "default", HAS_ARG | OPT_AUDIO | OPT_VIDEO | OPT_EXPERT, {(void*)opt_default}, "generic catch all option", "" },
-    { "i", HAS_ARG, {(void *)opt_input_file}, "read specified file", "input_file"},
+    { "i", OPT_BOOL, {(void *)&dummy}, "read specified file", "input_file"},
     { NULL, },
 };
 
@@ -2960,6 +2963,7 @@ static void show_usage(void)
 
 static int opt_help(const char *opt, const char *arg)
 {
+    const AVClass *class;
     av_log_set_callback(log_callback_help);
     show_usage();
     show_help_options(options, "Main options:\n",
@@ -2967,14 +2971,17 @@ static int opt_help(const char *opt, const char *arg)
     show_help_options(options, "\nAdvanced options:\n",
                       OPT_EXPERT, OPT_EXPERT);
     printf("\n");
-    av_opt_show2(avcodec_opts[0], NULL,
+    class = avcodec_get_class();
+    av_opt_show2(&class, NULL,
                  AV_OPT_FLAG_DECODING_PARAM, 0);
     printf("\n");
-    av_opt_show2(avformat_opts, NULL,
+    class = avformat_get_class();
+    av_opt_show2(&class, NULL,
                  AV_OPT_FLAG_DECODING_PARAM, 0);
 #if !CONFIG_AVFILTER
     printf("\n");
-    av_opt_show2(sws_opts, NULL,
+    class = sws_get_class();
+    av_opt_show2(&class, NULL,
                  AV_OPT_FLAG_ENCODING_PARAM, 0);
 #endif
     printf("\nWhile playing:\n"
@@ -3034,7 +3041,7 @@ int main(int argc, char **argv)
 
     show_banner();
 
-    parse_options(argc, argv, options, opt_input_file);
+    parse_options(NULL, argc, argv, options, opt_input_file);
 
     if (!input_filename) {
         show_usage();

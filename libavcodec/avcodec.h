@@ -2481,12 +2481,14 @@ typedef struct AVCodecContext {
      */
     int chromaoffset;
 
+#if FF_API_X264_GLOBAL_OPTS
     /**
      * Influences how often B-frames are used.
      * - encoding: Set by user.
      * - decoding: unused
      */
-    int bframebias;
+    attribute_deprecated int bframebias;
+#endif
 
     /**
      * trellis RD quantization
@@ -2495,12 +2497,13 @@ typedef struct AVCodecContext {
      */
     int trellis;
 
+#if FF_API_X264_GLOBAL_OPTS
     /**
      * Reduce fluctuations in qp (before curve compression).
      * - encoding: Set by user.
      * - decoding: unused
      */
-    float complexityblur;
+    attribute_deprecated float complexityblur;
 
     /**
      * in-loop deblocking filter alphac0 parameter
@@ -2508,7 +2511,7 @@ typedef struct AVCodecContext {
      * - encoding: Set by user.
      * - decoding: unused
      */
-    int deblockalpha;
+    attribute_deprecated int deblockalpha;
 
     /**
      * in-loop deblocking filter beta parameter
@@ -2516,14 +2519,14 @@ typedef struct AVCodecContext {
      * - encoding: Set by user.
      * - decoding: unused
      */
-    int deblockbeta;
+    attribute_deprecated int deblockbeta;
 
     /**
      * macroblock subpartition sizes to consider - p8x8, p4x4, b8x8, i8x8, i4x4
      * - encoding: Set by user.
      * - decoding: unused
      */
-    int partitions;
+    attribute_deprecated int partitions;
 #define X264_PART_I4X4 0x001  /* Analyze i4x4 */
 #define X264_PART_I8X8 0x002  /* Analyze i8x8 (requires 8x8 transform) */
 #define X264_PART_P8X8 0x010  /* Analyze p16x8, p8x16 and p8x8 */
@@ -2535,7 +2538,8 @@ typedef struct AVCodecContext {
      * - encoding: Set by user.
      * - decoding: unused
      */
-    int directpred;
+    attribute_deprecated int directpred;
+#endif
 
     /**
      * Audio cutoff bandwidth (0 means "automatic")
@@ -4416,5 +4420,13 @@ int av_lockmgr_register(int (*cb)(void **mutex, enum AVLockOp op));
  * Get the type of the given codec.
  */
 enum AVMediaType avcodec_get_type(enum CodecID codec_id);
+
+/**
+ * Get the AVClass for AVCodecContext. It can be used in combination with
+ * AV_OPT_SEARCH_FAKE_OBJ for examining options.
+ *
+ * @see av_opt_find().
+ */
+const AVClass *avcodec_get_class(void);
 
 #endif /* AVCODEC_AVCODEC_H */

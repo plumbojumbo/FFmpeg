@@ -374,8 +374,8 @@ static void ff_dlog_link(void *ctx, AVFilterLink *link, int end)
         av_get_channel_layout_string(buf, sizeof(buf), -1, link->channel_layout);
 
         av_dlog(ctx,
-                "link[%p r:%"PRId64" cl:%s fmt:%-16s %-16s->%-16s]%s",
-                link, link->sample_rate, buf,
+                "link[%p r:%d cl:%s fmt:%-16s %-16s->%-16s]%s",
+                link, (int)link->sample_rate, buf,
                 av_get_sample_fmt_name(link->format),
                 link->src ? link->src->filter->name : "",
                 link->dst ? link->dst->filter->name : "",
@@ -447,17 +447,16 @@ fail:
     return NULL;
 }
 
-AVFilterBufferRef *avfilter_get_audio_buffer(AVFilterLink *link, int perms,
-                                             enum AVSampleFormat sample_fmt, int nb_samples,
-                                             int64_t channel_layout, int planar)
+AVFilterBufferRef *avfilter_get_audio_buffer(AVFilterLink *link,
+                                             int perms, int nb_samples)
 {
     AVFilterBufferRef *ret = NULL;
 
     if (link->dstpad->get_audio_buffer)
-        ret = link->dstpad->get_audio_buffer(link, perms, sample_fmt, nb_samples, channel_layout, planar);
+        ret = link->dstpad->get_audio_buffer(link, perms, nb_samples);
 
     if (!ret)
-        ret = avfilter_default_get_audio_buffer(link, perms, sample_fmt, nb_samples, channel_layout, planar);
+        ret = avfilter_default_get_audio_buffer(link, perms, nb_samples);
 
     if (ret)
         ret->type = AVMEDIA_TYPE_AUDIO;
@@ -664,10 +663,7 @@ void avfilter_filter_samples(AVFilterLink *link, AVFilterBufferRef *samplesref)
                samplesref->perms, link->dstpad->min_perms, link->dstpad->rej_perms);
 
         link->cur_buf = avfilter_default_get_audio_buffer(link, dst->min_perms,
-                                                          samplesref->format,
-                                                          samplesref->audio->nb_samples,
-                                                          samplesref->audio->channel_layout,
-                                                          samplesref->audio->planar);
+                                                          samplesref->audio->nb_samples);
         link->cur_buf->pts                = samplesref->pts;
         link->cur_buf->audio->sample_rate = samplesref->audio->sample_rate;
 
