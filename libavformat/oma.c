@@ -60,9 +60,10 @@ enum {
 };
 
 static const AVCodecTag codec_oma_tags[] = {
-    { CODEC_ID_ATRAC3,  OMA_CODECID_ATRAC3 },
-    { CODEC_ID_ATRAC3P, OMA_CODECID_ATRAC3P },
-    { CODEC_ID_MP3,     OMA_CODECID_MP3 },
+    { CODEC_ID_ATRAC3,      OMA_CODECID_ATRAC3 },
+    { CODEC_ID_ATRAC3P,     OMA_CODECID_ATRAC3P },
+    { CODEC_ID_MP3,         OMA_CODECID_MP3 },
+    { CODEC_ID_PCM_S16BE,   OMA_CODECID_LPCM },
 };
 
 static const uint64_t leaf_table[] = {
@@ -328,6 +329,7 @@ static int oma_read_header(AVFormatContext *s,
             st->codec->channels    = 2;
             st->codec->sample_rate = samplerate;
             st->codec->bit_rate    = st->codec->sample_rate * framesize * 8 / 1024;
+            st->codec->block_align = framesize;
 
             /* fake the atrac3 extradata (wav format, makes stream copy to wav work) */
             st->codec->extradata_size = 14;
@@ -350,19 +352,29 @@ static int oma_read_header(AVFormatContext *s,
             framesize = ((codec_params & 0x3FF) * 8) + 8;
             st->codec->sample_rate = srate_tab[(codec_params >> 13) & 7]*100;
             st->codec->bit_rate    = st->codec->sample_rate * framesize * 8 / 1024;
+            st->codec->block_align = framesize;
             av_set_pts_info(st, 64, 1, st->codec->sample_rate);
             av_log(s, AV_LOG_ERROR, "Unsupported codec ATRAC3+!\n");
             break;
         case OMA_CODECID_MP3:
             st->need_parsing = AVSTREAM_PARSE_FULL;
-            framesize = 1024;
+            st->codec->block_align = 1024;
+            break;
+        case OMA_CODECID_LPCM:
+            /* PCM 44.1 kHz 16 bit stereo big-endian */
+            st->codec->channels = 2;
+            st->codec->sample_rate = 44100;
+            /* technically this is 4, need at least 8 for decryptor */
+            st->codec->block_align = 1024;
+            /* sample rate x orig. block align x 8 */
+            st->codec->bit_rate = st->codec->sample_rate * 32;
+            st->codec->bits_per_coded_sample = av_get_bits_per_sample(st->codec->codec_id);
+            av_set_pts_info(st, 64, 1, st->codec->sample_rate);
             break;
         default:
             av_log(s, AV_LOG_ERROR, "Unsupported codec %d!\n",buf[32]);
             return -1;
     }
-
-    st->codec->block_align = framesize;
 
     return 0;
 }
