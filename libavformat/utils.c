@@ -896,6 +896,7 @@ static int is_intra_only(AVCodecContext *enc){
         case CODEC_ID_VCR1:
         case CODEC_ID_DNXHD:
         case CODEC_ID_JPEG2000:
+        case CODEC_ID_PRORES:
             return 1;
         default: break;
         }
@@ -1742,7 +1743,6 @@ static int seek_frame_generic(AVFormatContext *s,
         return -1;
 
     if(index < 0 || index==st->nb_index_entries-1){
-        int i;
         AVPacket pkt;
 
         if(st->nb_index_entries){
@@ -1755,12 +1755,12 @@ static int seek_frame_generic(AVFormatContext *s,
             if ((ret = avio_seek(s->pb, s->data_offset, SEEK_SET)) < 0)
                 return ret;
         }
-        for(i=0;; i++) {
-            int ret;
+        for (;;) {
+            int read_status;
             do{
-                ret = av_read_frame(s, &pkt);
-            }while(ret == AVERROR(EAGAIN));
-            if(ret<0)
+                read_status = av_read_frame(s, &pkt);
+            } while (read_status == AVERROR(EAGAIN));
+            if (read_status < 0)
                 break;
             av_free_packet(&pkt);
             if(stream_index == pkt.stream_index){
@@ -1856,6 +1856,8 @@ static int has_duration(AVFormatContext *ic)
 {
     int i;
     AVStream *st;
+    if(ic->duration != AV_NOPTS_VALUE)
+        return 1;
 
     for(i = 0;i < ic->nb_streams; i++) {
         st = ic->streams[i];
@@ -1913,14 +1915,14 @@ static void update_stream_timings(AVFormatContext *ic)
                 duration = end_time - start_time;
         }
     }
-    if (duration != INT64_MIN) {
+    if (duration != INT64_MIN && ic->duration == AV_NOPTS_VALUE) {
         ic->duration = duration;
-        if (ic->file_size > 0) {
+    }
+        if (ic->file_size > 0 && ic->duration != AV_NOPTS_VALUE) {
             /* compute the bitrate */
             ic->bit_rate = (double)ic->file_size * 8.0 * AV_TIME_BASE /
                 (double)ic->duration;
         }
-    }
 }
 
 static void fill_all_stream_timings(AVFormatContext *ic)
