@@ -26,7 +26,6 @@
  * http://id3.org/Developer_Information
  */
 
-#include <inttypes.h>
 #include "id3v2.h"
 #include "id3v1.h"
 #include "libavutil/avstring.h"
@@ -68,75 +67,96 @@ static unsigned int get_size(AVIOContext *s, int len)
 }
 
 /**
- * Decode content to UTF-8 according to encoding type. Depending on the given
- * taglen argument, either taglen bytes are read from the AVIOContext or until
- * the first U+0000 character. The decoded buffer is always null terminated.
+ * Free GEOB type extra metadata.
+ */
+static void free_geobtag(ID3v2ExtraMetaGEOB *geob)
+{
+    av_free(geob->mime_type);
+    av_free(geob->file_name);
+    av_free(geob->description);
+    av_free(geob->data);
+    av_free(geob);
+}
+
+/**
+ * Decode characters to UTF-8 according to encoding type. The decoded buffer is
+ * always null terminated.
  *
  * @param dst Pointer where the address of the buffer with the decoded bytes is
  * stored. Buffer must be freed by caller.
  * @param dstlen Pointer to an int where the length of the decoded string
  * is stored (in bytes, incl. null termination)
- * @param taglen The length of the tag. If this is <0 then pb is read until a
- * null character is found. Otherwise taglen bytes are read.
- * @param key The tag frame key (for logging)
- * @returns The number of bytes read from pb
+ * @param maxread Pointer to maximum number of characters to read from the
+ * AVIOContext. After execution the value is decremented by the number of bytes
+ * actually read.
+ * @seeknull If true, decoding stops after the first U+0000 character found, if
+ * there is any before maxread is reached
+ * @returns 0 if no error occured, dst is uninitialized on error
  */
-static unsigned int decode_str(AVFormatContext *s, AVIOContext *pb, int type,
-                               char **dst, int *dstlen, int taglen, const char *key)
+static int decode_str(AVFormatContext *s, AVIOContext *pb, int encoding,
+                      uint8_t **dst, int *dstlen, int *maxread, const int seeknull)
 {
-    int len = 0;
-    const int seeknull = (taglen < 0);
+    int len, ret;
     uint8_t tmp;
     uint32_t ch = 1;
-    const uint64_t oldpos = avio_tell(pb);
+    int left = *maxread;
     unsigned int (*get)(AVIOContext*) = avio_rb16;
     AVIOContext *dynbuf;
 
-    if (!dst)
-        return 0;
-
-    if (avio_open_dyn_buf(&dynbuf)) {
+    if ((ret = avio_open_dyn_buf(&dynbuf))) {
         av_log(s, AV_LOG_ERROR, "Error opening memory stream\n");
-        return 0;
+        return ret;
     }
 
-    switch (type) { /* encoding type */
+    switch (encoding) {
 
     case ID3v2_ENCODING_ISO8859:
-        while (!seeknull && taglen-- || seeknull && ch) {
+        while (left && (!seeknull || ch)) {
             ch = avio_r8(pb);
             PUT_UTF8(ch, tmp, avio_w8(dynbuf, tmp);)
+            left--;
         }
         break;
 
     case ID3v2_ENCODING_UTF16BOM:
-        taglen -= 2;
+        if ((left -= 2) < 0) {
+            av_log(s, AV_LOG_ERROR, "Cannot read BOM value, input too short\n");
+            avio_close_dyn_buf(dynbuf, (uint8_t **)dst);
+            av_freep(dst);
+            return AVERROR(EINVAL);
+        }
         switch (avio_rb16(pb)) {
         case 0xfffe:
             get = avio_rl16;
         case 0xfeff:
             break;
         default:
-            av_log(s, AV_LOG_ERROR, "Incorrect BOM value in tag %s.\n", key);
-            return 2;
+            av_log(s, AV_LOG_ERROR, "Incorrect BOM value\n");
+            avio_close_dyn_buf(dynbuf, (uint8_t **)dst);
+            av_freep(dst);
+            *maxread = left;
+            return AVERROR(EINVAL);
         }
         // fall-through
 
     case ID3v2_ENCODING_UTF16BE:
-        while (!seeknull && taglen > 1 || seeknull && ch) {
-            GET_UTF16(ch, (seeknull || (taglen -= 2) >= 0 ? get(pb) : 0), break;)
+        while ((left > 1) && (!seeknull || ch)) {
+            GET_UTF16(ch, ((left -= 2) >= 0 ? get(pb) : 0), break;)
             PUT_UTF8(ch, tmp, avio_w8(dynbuf, tmp);)
         }
+        if (left < 0)
+            left += 2; /* did not read last char from pb */
         break;
 
     case ID3v2_ENCODING_UTF8:
-        while (!seeknull && taglen-- || seeknull && ch) {
+        while (left && (!seeknull || ch)) {
             ch = avio_r8(pb);
             avio_w8(dynbuf, ch);
+            left--;
         }
         break;
     default:
-        av_log(s, AV_LOG_WARNING, "Unknown encoding in tag %s.\n", key);
+        av_log(s, AV_LOG_WARNING, "Unknown encoding\n");
     }
 
     if (ch)
@@ -146,7 +166,9 @@ static unsigned int decode_str(AVFormatContext *s, AVIOContext *pb, int type,
     if (dstlen)
         *dstlen = len;
 
-    return avio_tell(pb) - oldpos;
+    *maxread = left;
+
+    return 0;
 }
 
 /**
@@ -154,7 +176,7 @@ static unsigned int decode_str(AVFormatContext *s, AVIOContext *pb, int type,
  */
 static void read_ttag(AVFormatContext *s, AVIOContext *pb, int taglen, const char *key)
 {
-    char *dst;
+    uint8_t *dst;
     const char *val = NULL;
     int len, dstlen;
     unsigned genre;
@@ -164,7 +186,10 @@ static void read_ttag(AVFormatContext *s, AVIOContext *pb, int taglen, const cha
 
     taglen--; /* account for encoding type byte */
 
-    decode_str(s, pb, avio_r8(pb), &dst, &dstlen, taglen, key);
+    if (decode_str(s, pb, avio_r8(pb), &dst, &dstlen, &taglen, 0) < 0) {
+        av_log(s, AV_LOG_ERROR, "Error reading frame %s, skipped\n", key);
+        return;
+    }
 
     if (!(strcmp(key, "TCON") && strcmp(key, "TCO"))
         && (sscanf(dst, "(%d)", &genre) == 1 || sscanf(dst, "%d", &genre) == 1)
@@ -191,8 +216,8 @@ static void read_ttag(AVFormatContext *s, AVIOContext *pb, int taglen, const cha
  */
 static void read_geobtag(AVFormatContext *s, AVIOContext *pb, int taglen, char *tag, ID3v2ExtraMeta **extra_meta)
 {
-    ID3v2ExtraMetaGEOB *geob_data;
-    ID3v2ExtraMeta *new_extra;
+    ID3v2ExtraMetaGEOB *geob_data = NULL;
+    ID3v2ExtraMeta *new_extra = NULL;
     char encoding;
     unsigned int len;
 
@@ -201,56 +226,63 @@ static void read_geobtag(AVFormatContext *s, AVIOContext *pb, int taglen, char *
 
     geob_data = av_mallocz(sizeof(ID3v2ExtraMetaGEOB));
     if (!geob_data) {
-        av_log(s, AV_LOG_ERROR, "Failed to alloc %"PRIuPTR" bytes\n", sizeof(ID3v2ExtraMetaGEOB));
+        av_log(s, AV_LOG_ERROR, "Failed to alloc %zu bytes\n", sizeof(ID3v2ExtraMetaGEOB));
         return;
     }
 
     new_extra = av_mallocz(sizeof(ID3v2ExtraMeta));
     if (!new_extra) {
-        av_log(s, AV_LOG_ERROR, "Failed to alloc %"PRIuPTR" bytes\n", sizeof(ID3v2ExtraMeta));
-        return;
+        av_log(s, AV_LOG_ERROR, "Failed to alloc %zu bytes\n", sizeof(ID3v2ExtraMeta));
+        goto fail;
     }
 
     /* read encoding type byte */
     encoding = avio_r8(pb);
     taglen--;
 
-    /* read MIME type (always ISO-8859) and save as UTF-8 */
-    taglen -= decode_str(s, pb, ID3v2_ENCODING_ISO8859, &geob_data->mime_type, NULL, -1, "GEOB");
+    /* read MIME type (always ISO-8859) */
+    if (decode_str(s, pb, ID3v2_ENCODING_ISO8859, &geob_data->mime_type, NULL, &taglen, 1) < 0
+        || taglen <= 0)
+        goto fail;
 
-    /* read file name and save as UTF-8 */
-    taglen -= decode_str(s, pb, encoding, &geob_data->file_name, NULL, -1, "GEOB");
+    /* read file name */
+    if (decode_str(s, pb, encoding, &geob_data->file_name, NULL, &taglen, 1) < 0
+        || taglen <= 0)
+        goto fail;
 
-    /* read content description and save as UTF-8 */
-    taglen -= decode_str(s, pb, encoding, &geob_data->description, NULL, -1, "GEOB");
+    /* read content description */
+    if (decode_str(s, pb, encoding, &geob_data->description, NULL, &taglen, 1) < 0
+        || taglen < 0)
+        goto fail;
 
-    /* save encapsulated binary data */
-    geob_data->data = av_malloc(taglen);
-    if (!geob_data->data) {
-        av_log(s, AV_LOG_ERROR, "Failed to alloc %d bytes\n", taglen);
-        return;
+    if (taglen) {
+        /* save encapsulated binary data */
+        geob_data->data = av_malloc(taglen);
+        if (!geob_data->data) {
+            av_log(s, AV_LOG_ERROR, "Failed to alloc %d bytes\n", taglen);
+            goto fail;
+        }
+        if ((len = avio_read(pb, geob_data->data, taglen)) < taglen)
+            av_log(s, AV_LOG_WARNING, "Error reading GEOB frame, data truncated.\n");
+        geob_data->datasize = len;
+    } else {
+        geob_data->data = NULL;
+        geob_data->datasize = 0;
     }
-    if ((len = avio_read(pb, geob_data->data, taglen)) < taglen)
-        av_log(s, AV_LOG_WARNING, "Error reading GEOB frame, data truncated.\n");
-    geob_data->datasize = len;
 
     /* add data to the list */
     new_extra->tag = "GEOB";
     new_extra->data = geob_data;
     new_extra->next = *extra_meta;
     *extra_meta = new_extra;
-}
 
-/**
- * Free GEOB type extra metadata.
- */
-static void free_geobtag(ID3v2ExtraMetaGEOB *geob)
-{
-    av_free(geob->mime_type);
-    av_free(geob->file_name);
-    av_free(geob->description);
-    av_free(geob->data);
-    av_free(geob);
+    return;
+
+fail:
+    av_log(s, AV_LOG_ERROR, "Error reading frame %s, skipped\n", tag);
+    free_geobtag(geob_data);
+    av_free(new_extra);
+    return;
 }
 
 static int is_number(const char *str)
@@ -300,24 +332,23 @@ finish:
 }
 
 /**
- * Get the corresponding function to parse a certain tag type or free the parsed data.
+ * Get the corresponding ID3v2EMFunc struct for a tag.
  * @param isv34 Determines if v2.2 or v2.3/4 strings are used
- * @param read Determines if the function to read or to free data is returned
- * @return If read is non-zero, a pointer to the parse function is returned. If read is zero a pointer to the free function is returned. If no function for the tag could be found, NULL is returned.
+ * @return A pointer to the ID3v2EMFunc struct if found, NULL otherwise.
  */
-static void *get_extra_meta_func(const char *tag, int isv34, int read)
+static const ID3v2EMFunc *get_extra_meta_func(const char *tag, int isv34)
 {
-#define funcs ff_id3v2_extra_meta_funcs
     int i = 0;
-    while (funcs[i].tag3) {
+    while (ff_id3v2_extra_meta_funcs[i].tag3) {
         if (!memcmp(tag,
-                   (isv34 ? funcs[i].tag4 : funcs[i].tag3),
-                   (isv34 ? 4 : 3)))
-            return (read ? funcs[i].read : funcs[i].free);
+                    (isv34 ?
+                        ff_id3v2_extra_meta_funcs[i].tag4 :
+                        ff_id3v2_extra_meta_funcs[i].tag3),
+                    (isv34 ? 4 : 3)))
+            return &ff_id3v2_extra_meta_funcs[i];
         i++;
     }
     return NULL;
-#undef funcs
 }
 
 static void ff_id3v2_parse(AVFormatContext *s, int len, uint8_t version, uint8_t flags, ID3v2ExtraMeta **extra_meta)
@@ -398,7 +429,7 @@ static void ff_id3v2_parse(AVFormatContext *s, int len, uint8_t version, uint8_t
             av_log(s, AV_LOG_WARNING, "Skipping encrypted/compressed ID3v2 frame %s.\n", tag);
             avio_skip(s->pb, tlen);
         /* check for text tag or supported special meta tag */
-        } else if (tag[0] == 'T' || (extra_meta && (extra_func = get_extra_meta_func(tag, isv34, 1)))) {
+        } else if (tag[0] == 'T' || (extra_meta && (extra_func = get_extra_meta_func(tag, isv34)->read))) {
             if (unsync || tunsync) {
                 int i, j;
                 av_fast_malloc(&buffer, &buffer_size, tlen);
@@ -490,7 +521,7 @@ void ff_id3v2_free_extra_meta(ID3v2ExtraMeta **extra_meta)
     void (*free_func)(ID3v2ExtraMeta*);
 
     while (current) {
-        if ((free_func = get_extra_meta_func(current->tag, 1, 0)))
+        if ((free_func = get_extra_meta_func(current->tag, 1)->free))
             free_func(current->data);
         next = current->next;
         av_freep(&current);
@@ -498,7 +529,7 @@ void ff_id3v2_free_extra_meta(ID3v2ExtraMeta **extra_meta)
     }
 }
 
-const struct ID3v2EMFunc ff_id3v2_extra_meta_funcs[] = {
+const ID3v2EMFunc ff_id3v2_extra_meta_funcs[] = {
     { "GEO", "GEOB", read_geobtag, free_geobtag },
     { NULL }
 };

@@ -53,9 +53,9 @@ typedef struct ID3v2ExtraMeta {
 
 typedef struct ID3v2ExtraMetaGEOB {
     uint32_t datasize;
-    char *mime_type;
-    char *file_name;
-    char *description;
+    uint8_t *mime_type;
+    uint8_t *file_name;
+    uint8_t *description;
     uint8_t *data;
 } ID3v2ExtraMetaGEOB;
 
