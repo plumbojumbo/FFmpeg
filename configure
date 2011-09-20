@@ -89,6 +89,7 @@ Configuration options:
   --disable-avdevice       disable libavdevice build
   --disable-avcodec        disable libavcodec build
   --disable-avformat       disable libavformat build
+  --disable-swresample     disable libswresample build
   --disable-swscale        disable libswscale build
   --disable-postproc       disable libpostproc build
   --disable-avfilter       disable video filter support [no]
@@ -167,6 +168,7 @@ External library support:
   --enable-libopencore-amrnb enable AMR-NB de/encoding via libopencore-amrnb [no]
   --enable-libopencore-amrwb enable AMR-WB decoding via libopencore-amrwb [no]
   --enable-libopencv       enable video filtering via libopencv [no]
+  --enable-libcdio         enable audio CD grabbing with libcdio
   --enable-libdc1394       enable IIDC-1394 grabbing using libdc1394
                            and libraw1394 [no]
   --enable-libdirac        enable Dirac support via libdirac [no]
@@ -992,6 +994,7 @@ CONFIG_LIST="
     h264pred
     hardcoded_tables
     huffman
+    libcdio
     libcelt
     libdc1394
     libdirac
@@ -1035,6 +1038,7 @@ CONFIG_LIST="
     small
     sram
     static
+    swresample
     swscale
     swscale_alpha
     thumb
@@ -1548,6 +1552,7 @@ dv1394_indev_deps="dv1394 dv_demuxer"
 fbdev_indev_deps="linux_fb_h"
 jack_indev_deps="jack_jack_h sem_timedwait"
 lavfi_indev_deps="avfilter"
+libcdio_indev_deps="libcdio"
 libdc1394_indev_deps="libdc1394"
 openal_indev_deps="openal"
 oss_indev_deps_any="soundcard_h sys_soundcard_h"
@@ -1575,6 +1580,7 @@ udp_protocol_deps="network"
 
 # filters
 abuffer_filter_deps="strtok_r"
+aconvert_filter_deps="strtok_r"
 aformat_filter_deps="strtok_r"
 amovie_filter_deps="avcodec avformat"
 blackframe_filter_deps="gpl"
@@ -1599,7 +1605,7 @@ avformat_deps="avcodec"
 postproc_deps="gpl"
 
 # programs
-ffmpeg_deps="avcodec avformat swscale"
+ffmpeg_deps="avcodec avformat swscale swresample"
 ffmpeg_select="buffer_filter buffersink_filter"
 avconv_deps="avcodec avformat swscale"
 avconv_select="buffer_filter"
@@ -1762,6 +1768,7 @@ enable postproc
 enable protocols
 enable static
 enable stripping
+enable swresample
 enable swscale
 enable swscale_alpha
 
@@ -2668,6 +2675,7 @@ die_license_disabled() {
     enabled $1 || { enabled $2 && die "$2 is $1 and --enable-$1 is not specified."; }
 }
 
+die_license_disabled gpl libcdio
 die_license_disabled gpl libx264
 die_license_disabled gpl libxavs
 die_license_disabled gpl libxvid
@@ -3091,6 +3099,9 @@ enabled jack_indev && check_lib2 jack/jack.h jack_client_open -ljack && check_fu
 
 enabled_any sndio_indev sndio_outdev && check_lib2 sndio.h sio_open -lsndio
 
+enabled libcdio &&
+    check_lib2 "cdio/cdda.h cdio/paranoia.h" cdio_cddap_open "-lcdio_paranoia -lcdio_cdda -lcdio"
+
 enabled x11grab                         &&
 check_header X11/Xlib.h                 &&
 check_header X11/extensions/XShm.h      &&
@@ -3135,7 +3146,7 @@ enabled extra_warnings && check_cflags -Winline
 
 # add some linker flags
 check_ldflags -Wl,--warn-common
-check_ldflags -Wl,-rpath-link=libpostproc:libswscale:libavfilter:libavdevice:libavformat:libavcodec:libavutil
+check_ldflags -Wl,-rpath-link=libpostproc:libswresample:libswscale:libavfilter:libavdevice:libavformat:libavcodec:libavutil
 test_ldflags -Wl,-Bsymbolic && append SHFLAGS -Wl,-Bsymbolic
 
 echo "X{};" > $TMPV
@@ -3314,6 +3325,7 @@ echo "libvdpau enabled          ${vdpau-no}"
 echo "AVISynth enabled          ${avisynth-no}"
 echo "libcelt enabled           ${libcelt-no}"
 echo "frei0r enabled            ${frei0r-no}"
+echo "libcdio support           ${libcdio-no}"
 echo "libdc1394 support         ${libdc1394-no}"
 echo "libdirac enabled          ${libdirac-no}"
 echo "libfaac enabled           ${libfaac-no}"
@@ -3464,6 +3476,7 @@ get_version(){
 }
 
 get_version LIBSWSCALE  libswscale/swscale.h
+get_version LIBSWRESAMPLE libswresample/swresample.h
 get_version LIBPOSTPROC libpostproc/postprocess.h
 get_version LIBAVCODEC  libavcodec/version.h
 get_version LIBAVDEVICE libavdevice/avdevice.h
@@ -3601,3 +3614,4 @@ pkgconfig_generate libavdevice "FFmpeg device handling library" "$LIBAVDEVICE_VE
 pkgconfig_generate libavfilter "FFmpeg video filtering library" "$LIBAVFILTER_VERSION" "$extralibs"
 pkgconfig_generate libpostproc "FFmpeg postprocessing library" "$LIBPOSTPROC_VERSION" "" "libavutil = $LIBAVUTIL_VERSION"
 pkgconfig_generate libswscale "FFmpeg image rescaling library" "$LIBSWSCALE_VERSION" "$LIBM" "libavutil = $LIBAVUTIL_VERSION"
+pkgconfig_generate libswresample "FFmpeg audio rescaling library" "$LIBSWRESAMPLE_VERSION" "$LIBM" "libavutil = $LIBAVUTIL_VERSION"

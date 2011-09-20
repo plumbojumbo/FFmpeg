@@ -2,6 +2,8 @@ include $(SUBDIR)../config.mak
 
 NAME = avfilter
 FFLIBS = avutil
+
+FFLIBS-$(CONFIG_ACONVERT_FILTER) += avcodec
 FFLIBS-$(CONFIG_AMOVIE_FILTER) += avformat avcodec
 FFLIBS-$(CONFIG_ARESAMPLE_FILTER) += avcodec
 FFLIBS-$(CONFIG_MOVIE_FILTER) += avformat avcodec
@@ -20,6 +22,7 @@ OBJS = allfilters.o                                                     \
 
 OBJS-$(CONFIG_AVCODEC)                       += avcodec.o
 
+OBJS-$(CONFIG_ACONVERT_FILTER)               += af_aconvert.o
 OBJS-$(CONFIG_AFORMAT_FILTER)                += af_aformat.o
 OBJS-$(CONFIG_ANULL_FILTER)                  += af_anull.o
 OBJS-$(CONFIG_ARESAMPLE_FILTER)              += af_aresample.o
@@ -131,6 +134,7 @@ OBJS-$(CONFIG_MP_FILTER) += libmpcodecs/vf_smartblur.o
 OBJS-$(CONFIG_MP_FILTER) += libmpcodecs/vf_softpulldown.o
 OBJS-$(CONFIG_MP_FILTER) += libmpcodecs/vf_softskip.o
 OBJS-$(CONFIG_MP_FILTER) += libmpcodecs/vf_spp.o
+OBJS-$(CONFIG_MP_FILTER) += libmpcodecs/vf_stereo3d.o
 OBJS-$(CONFIG_MP_FILTER) += libmpcodecs/vf_swapuv.o
 OBJS-$(CONFIG_MP_FILTER) += libmpcodecs/vf_telecine.o
 OBJS-$(CONFIG_MP_FILTER) += libmpcodecs/vf_tile.o
@@ -145,6 +149,8 @@ OBJS-$(CONFIG_MP_FILTER) += libmpcodecs/pullup.o
 -include $(SRC_PATH)/$(SUBDIR)$(ARCH)/Makefile
 
 DIRS = x86 libmpcodecs
+
+TESTPROGS = formats
 
 TOOLS = graph2dot lavfi-showfiltfmts
 

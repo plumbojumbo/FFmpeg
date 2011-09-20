@@ -361,6 +361,9 @@ enum CodecID {
     /* other specific kind of codecs (generally used for attachments) */
     CODEC_ID_FIRST_UNKNOWN = 0x18000,           ///< A dummy ID pointing at the start of various fake codecs.
     CODEC_ID_TTF= 0x18000,
+    CODEC_ID_BINTEXT,
+    CODEC_ID_XBIN,
+    CODEC_ID_IDF,
 
     CODEC_ID_PROBE= 0x19000, ///< codec_id is not known (like CODEC_ID_NONE) but lavf should attempt to identify it
 
@@ -605,6 +608,7 @@ typedef struct RcOverride{
 #define CODEC_FLAG2_LOCAL_HEADER  0x00000008 ///< Place global headers at every keyframe instead of in extradata.
 #define CODEC_FLAG2_SKIP_RD       0x00004000 ///< RD optimal MB level residual skipping
 #define CODEC_FLAG2_CHUNKS        0x00008000 ///< Input bitstream might be truncated at a packet boundaries instead of only at frame boundaries.
+#define CODEC_FLAG2_SHOW_ALL      0x00400000 ///< Show all frames before the first keyframe
 /**
  * @defgroup deprecated_flags Deprecated codec flags
  * Use corresponding private codec options instead.
@@ -1181,6 +1185,8 @@ typedef struct AVFrame {
  * New fields can be added to the end with minor version bumps.
  * Removal, reordering and changes to existing fields require a major
  * version bump.
+ * Please use AVOptions (av_opt* / av_set/get*()) to access these fields from user
+ * applications.
  * sizeof(AVCodecContext) must not be used outside libav*.
  */
 typedef struct AVCodecContext {

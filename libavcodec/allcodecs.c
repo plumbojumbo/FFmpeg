@@ -109,7 +109,7 @@ void avcodec_register_all(void)
     REGISTER_ENCDEC  (FFV1, ffv1);
     REGISTER_ENCDEC  (FFVHUFF, ffvhuff);
     REGISTER_ENCDEC  (FLASHSV, flashsv);
-    REGISTER_ENCDEC (FLASHSV2, flashsv2);
+    REGISTER_ENCDEC  (FLASHSV2, flashsv2);
     REGISTER_DECODER (FLIC, flic);
     REGISTER_ENCDEC  (FLV, flv);
     REGISTER_DECODER (FOURXM, fourxm);
@@ -392,6 +392,11 @@ void avcodec_register_all(void)
     REGISTER_ENCODER (LIBX264, libx264);
     REGISTER_ENCODER (LIBXAVS, libxavs);
     REGISTER_ENCODER (LIBXVID, libxvid);
+
+    /* text */
+    REGISTER_DECODER (BINTEXT, bintext);
+    REGISTER_DECODER  (XBIN, xbin);
+    REGISTER_DECODER  (IDF, idf);
 
     /* parsers */
     REGISTER_PARSER  (AAC, aac);

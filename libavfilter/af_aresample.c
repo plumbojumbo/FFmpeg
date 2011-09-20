@@ -104,12 +104,12 @@ static int query_formats(AVFilterContext *ctx)
         return AVERROR(ENOMEM);
     avfilter_set_common_sample_formats(ctx, formats);
 
-    formats = avfilter_all_channel_layouts();
+    formats = avfilter_make_all_channel_layouts();
     if (!formats)
         return AVERROR(ENOMEM);
     avfilter_set_common_channel_layouts(ctx, formats);
 
-    formats = avfilter_all_packing_formats();
+    formats = avfilter_make_all_packing_formats();
     if (!formats)
         return AVERROR(ENOMEM);
     avfilter_set_common_packing_formats(ctx, formats);
@@ -268,10 +268,8 @@ static void filter_samples(AVFilterLink *inlink, AVFilterBufferRef *insamplesref
         if (aresample->outsamplesref)
             avfilter_unref_buffer(aresample->outsamplesref);
 
-        aresample->outsamplesref = avfilter_get_audio_buffer(outlink,
-                                                            AV_PERM_WRITE | AV_PERM_REUSE2,
-                                                             requested_out_nb_samples);
-
+        aresample->outsamplesref =
+            avfilter_get_audio_buffer(outlink, AV_PERM_WRITE, requested_out_nb_samples);
         avfilter_copy_buffer_ref_props(aresample->outsamplesref, insamplesref);
         aresample->outsamplesref->pts =
             insamplesref->pts / inlink->sample_rate * outlink->sample_rate;
