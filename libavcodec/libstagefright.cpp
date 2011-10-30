@@ -5,20 +5,20 @@
  * Copyright (C) 2011 Mohamed Naufal
  * Copyright (C) 2011 Martin Storsjö
  *
- * This file is part of Libav.
+ * This file is part of FFmpeg.
  *
- * Libav is free software; you can redistribute it and/or
+ * FFmpeg is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
  * version 2.1 of the License, or (at your option) any later version.
  *
- * Libav is distributed in the hope that it will be useful,
+ * FFmpeg is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public
- * License along with Libav; if not, write to the Free Software
+ * License along with FFmpeg; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
@@ -66,7 +66,7 @@ struct StagefrightContext {
 
     Frame *end_frame;
     bool source_done;
-    volatile sig_atomic_t thread_exited, stop_decode;
+    volatile sig_atomic_t thread_started, thread_exited, stop_decode;
 
     AVFrame ret_frame;
 
@@ -104,6 +104,8 @@ public:
         Frame *frame;
         status_t ret;
 
+        if (s->thread_exited)
+            return ERROR_END_OF_STREAM;
         pthread_mutex_lock(&s->in_mutex);
 
         while (s->in_queue->empty())
@@ -172,7 +174,15 @@ void* decode_thread(void *arg)
                 decode_done = 1;
             }
         }
-        pthread_mutex_lock(&s->out_mutex);
+        while (true) {
+            pthread_mutex_lock(&s->out_mutex);
+            if (s->out_queue->size() >= 10) {
+                pthread_mutex_unlock(&s->out_mutex);
+                usleep(10000);
+                continue;
+            }
+            break;
+        }
         s->out_queue->push_back(frame);
         pthread_mutex_unlock(&s->out_mutex);
     } while (!decode_done && !s->stop_decode);
@@ -264,7 +274,6 @@ static av_cold int Stagefright_init(AVCodecContext *avctx)
     pthread_mutex_init(&s->in_mutex, NULL);
     pthread_mutex_init(&s->out_mutex, NULL);
     pthread_cond_init(&s->condition, NULL);
-    pthread_create(&s->decode_thread_id, NULL, &decode_thread, avctx);
     return 0;
 
 fail:
@@ -293,6 +302,11 @@ static int Stagefright_decode_frame(AVCodecContext *avctx, void *data,
     AVPacket pkt = *avpkt;
     int ret;
 
+    if (!s->thread_started) {
+        pthread_create(&s->decode_thread_id, NULL, &decode_thread, avctx);
+        s->thread_started = true;
+    }
+
     if (avpkt && avpkt->data) {
         av_bitstream_filter_filter(s->bsfc, avctx, NULL, &pkt.data, &pkt.size,
                                    avpkt->data, avpkt->size, avpkt->flags & AV_PKT_FLAG_KEY);
@@ -311,7 +325,7 @@ static int Stagefright_decode_frame(AVCodecContext *avctx, void *data,
         frame = (Frame*)av_mallocz(sizeof(Frame));
         if (avpkt->data) {
             frame->status  = OK;
-            frame->size    = orig_size;
+            frame->size    = avpkt->size;
             // Stagefright can't handle negative timestamps -
             // if needed, work around this by offsetting them manually?
             if (avpkt->pts >= 0)
@@ -324,8 +338,10 @@ static int Stagefright_decode_frame(AVCodecContext *avctx, void *data,
             }
             uint8_t *ptr = avpkt->data;
             // The OMX.SEC decoder fails without this.
-            if (avpkt->size == orig_size + avctx->extradata_size)
+            if (avpkt->size == orig_size + avctx->extradata_size) {
                 ptr += avctx->extradata_size;
+                frame->size = orig_size;
+            }
             memcpy(frame->buffer, ptr, orig_size);
         } else {
             frame->status  = ERROR_END_OF_STREAM;
@@ -428,35 +444,51 @@ static av_cold int Stagefright_close(AVCodecContext *avctx)
     StagefrightContext *s = (StagefrightContext*)avctx->priv_data;
     Frame *frame;
 
-    if (!s->thread_exited) {
-        s->stop_decode = 1;
+    if (s->thread_started) {
+        if (!s->thread_exited) {
+            s->stop_decode = 1;
 
-        // Feed a dummy frame prior to signalling EOF.
-        // This is required to terminate the decoder(OMX.SEC)
-        // when only one frame is read during stream info detection.
-        if (s->dummy_buf && (frame = (Frame*)av_mallocz(sizeof(Frame)))) {
-            frame->status = OK;
-            frame->size   = s->dummy_bufsize;
-            frame->buffer = s->dummy_buf;
+            // Make sure decode_thread() doesn't get stuck
+            pthread_mutex_lock(&s->out_mutex);
+            while (!s->out_queue->empty()) {
+                frame = *s->out_queue->begin();
+                s->out_queue->erase(s->out_queue->begin());
+                if (frame->size)
+                    frame->mbuffer->release();
+                av_freep(&frame);
+            }
+            pthread_mutex_unlock(&s->out_mutex);
+
+            // Feed a dummy frame prior to signalling EOF.
+            // This is required to terminate the decoder(OMX.SEC)
+            // when only one frame is read during stream info detection.
+            if (s->dummy_buf && (frame = (Frame*)av_mallocz(sizeof(Frame)))) {
+                frame->status = OK;
+                frame->size   = s->dummy_bufsize;
+                frame->key    = 1;
+                frame->buffer = s->dummy_buf;
+                pthread_mutex_lock(&s->in_mutex);
+                s->in_queue->push_back(frame);
+                pthread_cond_signal(&s->condition);
+                pthread_mutex_unlock(&s->in_mutex);
+                s->dummy_buf = NULL;
+            }
+
             pthread_mutex_lock(&s->in_mutex);
-            s->in_queue->push_back(frame);
+            s->end_frame->status = ERROR_END_OF_STREAM;
+            s->in_queue->push_back(s->end_frame);
             pthread_cond_signal(&s->condition);
             pthread_mutex_unlock(&s->in_mutex);
-            s->dummy_buf = NULL;
+            s->end_frame = NULL;
         }
 
-        pthread_mutex_lock(&s->in_mutex);
-        s->end_frame->status = ERROR_END_OF_STREAM;
-        s->in_queue->push_back(s->end_frame);
-        pthread_cond_signal(&s->condition);
-        pthread_mutex_unlock(&s->in_mutex);
-        s->end_frame = NULL;
+        pthread_join(s->decode_thread_id, NULL);
+
+        if (s->ret_frame.data[0])
+            avctx->release_buffer(avctx, &s->ret_frame);
+
+        s->thread_started = false;
     }
-
-    pthread_join(s->decode_thread_id, NULL);
-
-    if (s->ret_frame.data[0])
-        avctx->release_buffer(avctx, &s->ret_frame);
 
     while (!s->in_queue->empty()) {
         frame = *s->in_queue->begin();

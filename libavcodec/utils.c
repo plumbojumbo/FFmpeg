@@ -85,6 +85,20 @@ AVCodec *av_codec_next(AVCodec *c){
     else  return first_avcodec;
 }
 
+#if !FF_API_AVCODEC_INIT
+static
+#endif
+void avcodec_init(void)
+{
+    static int initialized = 0;
+
+    if (initialized != 0)
+        return;
+    initialized = 1;
+
+    dsputil_static_init();
+}
+
 void avcodec_register(AVCodec *codec)
 {
     AVCodec **p;
@@ -93,6 +107,9 @@ void avcodec_register(AVCodec *codec)
     while (*p != NULL) p = &(*p)->next;
     *p = codec;
     codec->next = NULL;
+
+    if (codec->init_static_data)
+        codec->init_static_data(codec);
 }
 
 unsigned avcodec_get_edge_width(void)
@@ -141,12 +158,15 @@ void avcodec_align_dimensions2(AVCodecContext *s, int *width, int *height, int l
     case PIX_FMT_YUV420P9BE:
     case PIX_FMT_YUV420P10LE:
     case PIX_FMT_YUV420P10BE:
+    case PIX_FMT_YUV422P9LE:
+    case PIX_FMT_YUV422P9BE:
     case PIX_FMT_YUV422P10LE:
     case PIX_FMT_YUV422P10BE:
     case PIX_FMT_YUV444P9LE:
     case PIX_FMT_YUV444P9BE:
     case PIX_FMT_YUV444P10LE:
     case PIX_FMT_YUV444P10BE:
+    case PIX_FMT_GBR24P:
         w_align= 16; //FIXME check for non mpeg style codecs and use less alignment
         h_align= 16;
         if(s->codec_id == CODEC_ID_MPEG2VIDEO || s->codec_id == CODEC_ID_MJPEG || s->codec_id == CODEC_ID_AMV || s->codec_id == CODEC_ID_THP || s->codec_id == CODEC_ID_H264 || s->codec_id == CODEC_ID_PRORES)
@@ -222,6 +242,22 @@ void avcodec_align_dimensions(AVCodecContext *s, int *width, int *height){
     linesize_align[2] <<= chroma_shift;
     align = FFMAX3(align, linesize_align[1], linesize_align[2]);
     *width=FFALIGN(*width, align);
+}
+
+void ff_init_buffer_info(AVCodecContext *s, AVFrame *pic)
+{
+    if (s->pkt) {
+        pic->pkt_pts = s->pkt->pts;
+        pic->pkt_pos = s->pkt->pos;
+    } else {
+        pic->pkt_pts = AV_NOPTS_VALUE;
+        pic->pkt_pos = -1;
+    }
+    pic->reordered_opaque= s->reordered_opaque;
+    pic->sample_aspect_ratio = s->sample_aspect_ratio;
+    pic->width               = s->width;
+    pic->height              = s->height;
+    pic->format              = s->pix_fmt;
 }
 
 int avcodec_default_get_buffer(AVCodecContext *s, AVFrame *pic){
@@ -575,6 +611,16 @@ int attribute_align_arg avcodec_open2(AVCodecContext *avctx, AVCodec *codec, AVD
         goto free_and_end;
     }
     avctx->frame_number = 0;
+#if FF_API_ER
+
+    av_log(avctx, AV_LOG_DEBUG, "err{or,}_recognition separate: %d; %d\n",
+           avctx->error_recognition, avctx->err_recognition);
+    /* FF_ER_CAREFUL (==1) implies AV_EF_CRCCHECK (== 1<<1 - 1),
+       FF_ER_COMPLIANT (==2) implies AV_EF_{CRCCHECK,BITSTREAM} (== 1<<2 - 1), et cetera} */
+    avctx->err_recognition |= (1<<(avctx->error_recognition-(avctx->error_recognition>=FF_ER_VERY_AGGRESSIVE))) - 1;
+    av_log(avctx, AV_LOG_DEBUG, "err{or,}_recognition combined: %d; %d\n",
+           avctx->error_recognition, avctx->err_recognition);
+#endif
 
     if (!HAVE_THREADS)
         av_log(avctx, AV_LOG_WARNING, "Warning: not compiled with thread support, using thread emulation\n");
@@ -587,10 +633,9 @@ int attribute_align_arg avcodec_open2(AVCodecContext *avctx, AVCodec *codec, AVD
     }
 
     if (avctx->codec->max_lowres < avctx->lowres || avctx->lowres < 0) {
-        av_log(avctx, AV_LOG_ERROR, "The maximum value for lowres supported by the decoder is %d\n",
+        av_log(avctx, AV_LOG_WARNING, "The maximum value for lowres supported by the decoder is %d\n",
                avctx->codec->max_lowres);
-        ret = AVERROR(EINVAL);
-        goto free_and_end;
+        avctx->lowres = avctx->codec->max_lowres;
     }
     if (avctx->codec->encode) {
         int i;
@@ -765,7 +810,7 @@ int attribute_align_arg avcodec_decode_video2(AVCodecContext *avctx, AVFrame *pi
     if((avctx->codec->capabilities & CODEC_CAP_DELAY) || avpkt->size || (avctx->active_thread_type&FF_THREAD_FRAME)){
         av_packet_split_side_data(avpkt);
         avctx->pkt = avpkt;
-        if (HAVE_PTHREADS && avctx->active_thread_type&FF_THREAD_FRAME)
+        if (HAVE_THREADS && avctx->active_thread_type&FF_THREAD_FRAME)
              ret = ff_thread_decode_frame(avctx, picture, got_picture_ptr,
                                           avpkt);
         else {
@@ -809,6 +854,11 @@ int attribute_align_arg avcodec_decode_audio3(AVCodecContext *avctx, int16_t *sa
     int ret;
 
     avctx->pkt = avpkt;
+
+    if (!avpkt->data && avpkt->size) {
+        av_log(avctx, AV_LOG_ERROR, "invalid packet: NULL data, size != 0\n");
+        return AVERROR(EINVAL);
+    }
 
     if((avctx->codec->capabilities & CODEC_CAP_DELAY) || avpkt->size){
         //FIXME remove the check below _after_ ensuring that all audio check that the available space is enough
@@ -904,10 +954,21 @@ av_cold int avcodec_close(AVCodecContext *avctx)
     return 0;
 }
 
+static enum CodecID remap_deprecated_codec_id(enum CodecID id)
+{
+    switch(id){
+        case CODEC_ID_G723_1_DEPRECATED : return CODEC_ID_G723_1;
+        case CODEC_ID_G729_DEPRECATED   : return CODEC_ID_G729;
+        case CODEC_ID_UTVIDEO_DEPRECATED: return CODEC_ID_UTVIDEO;
+        default                         : return id;
+    }
+}
+
 AVCodec *avcodec_find_encoder(enum CodecID id)
 {
     AVCodec *p, *experimental=NULL;
     p = first_avcodec;
+    id= remap_deprecated_codec_id(id);
     while (p) {
         if (p->encode != NULL && p->id == id) {
             if (p->capabilities & CODEC_CAP_EXPERIMENTAL && !experimental) {
@@ -938,6 +999,7 @@ AVCodec *avcodec_find_decoder(enum CodecID id)
 {
     AVCodec *p, *experimental=NULL;
     p = first_avcodec;
+    id= remap_deprecated_codec_id(id);
     while (p) {
         if (p->decode != NULL && p->id == id) {
             if (p->capabilities & CODEC_CAP_EXPERIMENTAL && !experimental) {
@@ -1144,23 +1206,9 @@ const char *avcodec_license(void)
     return LICENSE_PREFIX FFMPEG_LICENSE + sizeof(LICENSE_PREFIX) - 1;
 }
 
-#if !FF_API_AVCODEC_INIT
-static
-#endif
-void avcodec_init(void)
-{
-    static int initialized = 0;
-
-    if (initialized != 0)
-        return;
-    initialized = 1;
-
-    dsputil_static_init();
-}
-
 void avcodec_flush_buffers(AVCodecContext *avctx)
 {
-    if(HAVE_PTHREADS && avctx->active_thread_type&FF_THREAD_FRAME)
+    if(HAVE_THREADS && avctx->active_thread_type&FF_THREAD_FRAME)
         ff_thread_flush(avctx);
     else if(avctx->codec->flush)
         avctx->codec->flush(avctx);
@@ -1200,6 +1248,8 @@ int av_get_bits_per_sample(enum CodecID codec_id){
     case CODEC_ID_ADPCM_SBPRO_4:
     case CODEC_ID_ADPCM_CT:
     case CODEC_ID_ADPCM_IMA_WAV:
+    case CODEC_ID_ADPCM_IMA_QT:
+    case CODEC_ID_ADPCM_SWF:
     case CODEC_ID_ADPCM_MS:
     case CODEC_ID_ADPCM_YAMAHA:
         return 4;
@@ -1338,7 +1388,7 @@ int av_lockmgr_register(int (*cb)(void **mutex, enum AVLockOp op))
     return 0;
 }
 
-unsigned int ff_toupper4(unsigned int x)
+unsigned int avpriv_toupper4(unsigned int x)
 {
     return     toupper( x     &0xFF)
             + (toupper((x>>8 )&0xFF)<<8 )
@@ -1346,11 +1396,14 @@ unsigned int ff_toupper4(unsigned int x)
             + (toupper((x>>24)&0xFF)<<24);
 }
 
-#if !HAVE_PTHREADS
+#if !HAVE_THREADS
 
 int ff_thread_get_buffer(AVCodecContext *avctx, AVFrame *f)
 {
     f->owner = avctx;
+
+    ff_init_buffer_info(avctx, f);
+
     return avctx->get_buffer(avctx, f);
 }
 

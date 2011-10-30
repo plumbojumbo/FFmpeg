@@ -19,6 +19,7 @@ OBJS = allfilters.o                                                     \
        drawutils.o                                                      \
        formats.o                                                        \
        graphparser.o                                                    \
+       transform.o                                                      \
 
 OBJS-$(CONFIG_AVCODEC)                       += avcodec.o
 
@@ -29,6 +30,7 @@ OBJS-$(CONFIG_ARESAMPLE_FILTER)              += af_aresample.o
 OBJS-$(CONFIG_ASHOWINFO_FILTER)              += af_ashowinfo.o
 
 OBJS-$(CONFIG_ABUFFER_FILTER)                += asrc_abuffer.o
+OBJS-$(CONFIG_AEVALSRC_FILTER)               += asrc_aevalsrc.o
 OBJS-$(CONFIG_AMOVIE_FILTER)                 += src_movie.o
 OBJS-$(CONFIG_ANULLSRC_FILTER)               += asrc_anullsrc.o
 
@@ -41,6 +43,7 @@ OBJS-$(CONFIG_COPY_FILTER)                   += vf_copy.o
 OBJS-$(CONFIG_CROP_FILTER)                   += vf_crop.o
 OBJS-$(CONFIG_CROPDETECT_FILTER)             += vf_cropdetect.o
 OBJS-$(CONFIG_DELOGO_FILTER)                 += vf_delogo.o
+OBJS-$(CONFIG_DESHAKE_FILTER)                += vf_deshake.o
 OBJS-$(CONFIG_DRAWBOX_FILTER)                += vf_drawbox.o
 OBJS-$(CONFIG_DRAWTEXT_FILTER)               += vf_drawtext.o
 OBJS-$(CONFIG_FADE_FILTER)                   += vf_fade.o
@@ -81,7 +84,7 @@ OBJS-$(CONFIG_COLOR_FILTER)                  += vsrc_color.o
 OBJS-$(CONFIG_FREI0R_SRC_FILTER)             += vf_frei0r.o
 OBJS-$(CONFIG_MOVIE_FILTER)                  += src_movie.o
 OBJS-$(CONFIG_MPTESTSRC_FILTER)              += vsrc_mptestsrc.o
-OBJS-$(CONFIG_NULLSRC_FILTER)                += vsrc_nullsrc.o
+OBJS-$(CONFIG_NULLSRC_FILTER)                += vsrc_testsrc.o
 OBJS-$(CONFIG_RGBTESTSRC_FILTER)             += vsrc_testsrc.o
 OBJS-$(CONFIG_TESTSRC_FILTER)                += vsrc_testsrc.o
 

@@ -22,6 +22,7 @@
 #include "swresample_internal.h"
 #include "audioconvert.h"
 #include "libavutil/avassert.h"
+#include "libavutil/audioconvert.h"
 
 #define  C30DB  M_SQRT2
 #define  C15DB  1.189207115
@@ -35,21 +36,22 @@
 //TODO split options array out?
 #define OFFSET(x) offsetof(SwrContext,x)
 static const AVOption options[]={
-{"ich",  "input channel count", OFFSET( in.ch_count   ), FF_OPT_TYPE_INT, {.dbl=2}, 1, SWR_CH_MAX, 0},
-{"och", "output channel count", OFFSET(out.ch_count   ), FF_OPT_TYPE_INT, {.dbl=2}, 1, SWR_CH_MAX, 0},
-{"isr",  "input sample rate"  , OFFSET( in_sample_rate), FF_OPT_TYPE_INT, {.dbl=48000}, 1, INT_MAX, 0},
-{"osr", "output sample rate"  , OFFSET(out_sample_rate), FF_OPT_TYPE_INT, {.dbl=48000}, 1, INT_MAX, 0},
-{"ip" ,  "input planar"       , OFFSET( in.planar     ), FF_OPT_TYPE_INT, {.dbl=0},    0,       1, 0},
-{"op" , "output planar"       , OFFSET(out.planar     ), FF_OPT_TYPE_INT, {.dbl=0},    0,       1, 0},
-{"isf",  "input sample format", OFFSET( in_sample_fmt ), FF_OPT_TYPE_INT, {.dbl=AV_SAMPLE_FMT_S16}, 0, AV_SAMPLE_FMT_NB-1, 0},
-{"osf", "output sample format", OFFSET(out_sample_fmt ), FF_OPT_TYPE_INT, {.dbl=AV_SAMPLE_FMT_S16}, 0, AV_SAMPLE_FMT_NB-1, 0},
-{"tsf", "internal sample format", OFFSET(int_sample_fmt ), FF_OPT_TYPE_INT, {.dbl=AV_SAMPLE_FMT_NONE}, -1, AV_SAMPLE_FMT_FLT, 0},
-{"icl",  "input channel layout" , OFFSET( in_ch_layout), FF_OPT_TYPE_INT64, {.dbl=0}, 0, INT64_MAX, 0, "channel_layout"},
-{"ocl",  "output channel layout", OFFSET(out_ch_layout), FF_OPT_TYPE_INT64, {.dbl=0}, 0, INT64_MAX, 0, "channel_layout"},
-{"clev", "center mix level"     , OFFSET(clev)         , FF_OPT_TYPE_FLOAT, {.dbl=C_30DB}, 0, 4, 0},
-{"slev", "sourround mix level"  , OFFSET(slev)         , FF_OPT_TYPE_FLOAT, {.dbl=C_30DB}, 0, 4, 0},
-{"flags", NULL                  , OFFSET(flags)        , FF_OPT_TYPE_FLAGS, {.dbl=0}, 0,  UINT_MAX, 0, "flags"},
-{"res", "force resampling", 0, FF_OPT_TYPE_CONST, {.dbl=SWR_FLAG_RESAMPLE}, INT_MIN, INT_MAX, 0, "flags"},
+{"ich",  "input channel count", OFFSET( in.ch_count   ), AV_OPT_TYPE_INT, {.dbl=2}, 1, SWR_CH_MAX, 0},
+{"och", "output channel count", OFFSET(out.ch_count   ), AV_OPT_TYPE_INT, {.dbl=2}, 1, SWR_CH_MAX, 0},
+{"isr",  "input sample rate"  , OFFSET( in_sample_rate), AV_OPT_TYPE_INT, {.dbl=48000}, 1, INT_MAX, 0},
+{"osr", "output sample rate"  , OFFSET(out_sample_rate), AV_OPT_TYPE_INT, {.dbl=48000}, 1, INT_MAX, 0},
+//{"ip" ,  "input planar"       , OFFSET( in.planar     ), AV_OPT_TYPE_INT, {.dbl=0},    0,       1, 0},
+//{"op" , "output planar"       , OFFSET(out.planar     ), AV_OPT_TYPE_INT, {.dbl=0},    0,       1, 0},
+{"isf",  "input sample format", OFFSET( in_sample_fmt ), AV_OPT_TYPE_INT, {.dbl=AV_SAMPLE_FMT_S16}, 0, AV_SAMPLE_FMT_NB-1+256, 0},
+{"osf", "output sample format", OFFSET(out_sample_fmt ), AV_OPT_TYPE_INT, {.dbl=AV_SAMPLE_FMT_S16}, 0, AV_SAMPLE_FMT_NB-1+256, 0},
+{"tsf", "internal sample format", OFFSET(int_sample_fmt ), AV_OPT_TYPE_INT, {.dbl=AV_SAMPLE_FMT_NONE}, -1, AV_SAMPLE_FMT_FLT, 0},
+{"icl",  "input channel layout" , OFFSET( in_ch_layout), AV_OPT_TYPE_INT64, {.dbl=0}, 0, INT64_MAX, 0, "channel_layout"},
+{"ocl",  "output channel layout", OFFSET(out_ch_layout), AV_OPT_TYPE_INT64, {.dbl=0}, 0, INT64_MAX, 0, "channel_layout"},
+{"clev", "center mix level"     , OFFSET(clev)         , AV_OPT_TYPE_FLOAT, {.dbl=C_30DB}, 0, 4, 0},
+{"slev", "sourround mix level"  , OFFSET(slev)         , AV_OPT_TYPE_FLOAT, {.dbl=C_30DB}, 0, 4, 0},
+{"rmvol", "rematrix volume"     , OFFSET(rematrix_volume), AV_OPT_TYPE_FLOAT, {.dbl=1.0}, -1000, 1000, 0},
+{"flags", NULL                  , OFFSET(flags)        , AV_OPT_TYPE_FLAGS, {.dbl=0}, 0,  UINT_MAX, 0, "flags"},
+{"res", "force resampling", 0, AV_OPT_TYPE_CONST, {.dbl=SWR_FLAG_RESAMPLE}, INT_MIN, INT_MAX, 0, "flags"},
 
 {0}
 };
@@ -110,22 +112,11 @@ void swr_free(SwrContext **ss){
         free_temp(&s->in_buffer);
         swr_audio_convert_free(&s-> in_convert);
         swr_audio_convert_free(&s->out_convert);
+        swr_audio_convert_free(&s->full_convert);
         swr_resample_free(&s->resample);
     }
 
     av_freep(ss);
-}
-
-static int64_t guess_layout(int ch){
-    switch(ch){
-    case 1: return AV_CH_LAYOUT_MONO;
-    case 2: return AV_CH_LAYOUT_STEREO;
-    case 5: return AV_CH_LAYOUT_5POINT0;
-    case 6: return AV_CH_LAYOUT_5POINT1;
-    case 7: return AV_CH_LAYOUT_7POINT0;
-    case 8: return AV_CH_LAYOUT_7POINT1;
-    default: return 0;
-    }
 }
 
 int swr_init(SwrContext *s){
@@ -138,8 +129,22 @@ int swr_init(SwrContext *s){
     free_temp(&s->in_buffer);
     swr_audio_convert_free(&s-> in_convert);
     swr_audio_convert_free(&s->out_convert);
+    swr_audio_convert_free(&s->full_convert);
 
-    //We assume AVOptions checked the various values and the defaults where allowed
+    s-> in.planar= s-> in_sample_fmt >= 0x100;
+    s->out.planar= s->out_sample_fmt >= 0x100;
+    s-> in_sample_fmt &= 0xFF;
+    s->out_sample_fmt &= 0xFF;
+
+    if(s-> in_sample_fmt >= AV_SAMPLE_FMT_NB){
+        av_log(s, AV_LOG_ERROR, "Requested sample format %s is invalid\n", av_get_sample_fmt_name(s->in_sample_fmt));
+        return AVERROR(EINVAL);
+    }
+    if(s->out_sample_fmt >= AV_SAMPLE_FMT_NB){
+        av_log(s, AV_LOG_ERROR, "Requested sample format %s is invalid\n", av_get_sample_fmt_name(s->out_sample_fmt));
+        return AVERROR(EINVAL);
+    }
+
     if(   s->int_sample_fmt != AV_SAMPLE_FMT_S16
         &&s->int_sample_fmt != AV_SAMPLE_FMT_FLT){
         av_log(s, AV_LOG_ERROR, "Requested sample format %s is not supported internally, only float & S16 is supported\n", av_get_sample_fmt_name(s->int_sample_fmt));
@@ -162,12 +167,17 @@ int swr_init(SwrContext *s){
         return -1;
     }
 
-    if(!s-> in_ch_layout)
-        s-> in_ch_layout= guess_layout(s->in.ch_count);
-    if(!s->out_ch_layout)
-        s->out_ch_layout= guess_layout(s->out.ch_count);
+    if(s-> in.ch_count && s-> in_ch_layout && s->in.ch_count != av_get_channel_layout_nb_channels(s-> in_ch_layout)){
+        av_log(s, AV_LOG_WARNING, "Input channel layout has a different number of channels than there actually is, ignoring layout\n");
+        s-> in_ch_layout= 0;
+    }
 
-    s->rematrix= s->out_ch_layout  !=s->in_ch_layout;
+    if(!s-> in_ch_layout)
+        s-> in_ch_layout= av_get_default_channel_layout(s->in.ch_count);
+    if(!s->out_ch_layout)
+        s->out_ch_layout= av_get_default_channel_layout(s->out.ch_count);
+
+    s->rematrix= s->out_ch_layout  !=s->in_ch_layout || s->rematrix_volume!=1.0;
 
 #define RSC 1 //FIXME finetune
     if(!s-> in.ch_count)
@@ -182,6 +192,12 @@ av_assert0(s->out.ch_count);
     s-> in.bps= av_get_bits_per_sample_fmt(s-> in_sample_fmt)/8;
     s->int_bps= av_get_bits_per_sample_fmt(s->int_sample_fmt)/8;
     s->out.bps= av_get_bits_per_sample_fmt(s->out_sample_fmt)/8;
+
+    if(!s->resample && !s->rematrix){
+        s->full_convert = swr_audio_convert_alloc(s->out_sample_fmt,
+                                                  s-> in_sample_fmt, s-> in.ch_count, 0);
+        return 0;
+    }
 
     s->in_convert = swr_audio_convert_alloc(s->int_sample_fmt,
                                             s-> in_sample_fmt, s-> in.ch_count, 0);
@@ -250,10 +266,21 @@ static void copy(AudioData *out, AudioData *in,
         memcpy(out->ch[0], in->ch[0], count*out->ch_count*out->bps);
 }
 
+static void fill_audiodata(AudioData *out, uint8_t *in_arg [SWR_CH_MAX]){
+    int i;
+    if(out->planar){
+        for(i=0; i<out->ch_count; i++)
+            out->ch[i]= in_arg[i];
+    }else{
+        for(i=0; i<out->ch_count; i++)
+            out->ch[i]= in_arg[0] + i*out->bps;
+    }
+}
+
 int swr_convert(struct SwrContext *s, uint8_t *out_arg[SWR_CH_MAX], int out_count,
                          const uint8_t *in_arg [SWR_CH_MAX], int  in_count){
     AudioData *postin, *midbuf, *preout;
-    int ret, i/*, in_max*/;
+    int ret/*, in_max*/;
     AudioData * in= &s->in;
     AudioData *out= &s->out;
     AudioData preout_tmp, midbuf_tmp;
@@ -264,12 +291,14 @@ int swr_convert(struct SwrContext *s, uint8_t *out_arg[SWR_CH_MAX], int out_coun
         out_count = in_count;
     }
 
-    av_assert0(in ->planar == 0);
-    av_assert0(out->planar == 0);
-    for(i=0; i<s-> in.ch_count; i++)
-        in ->ch[i]=  in_arg[0] + i* in->bps;
-    for(i=0; i<s->out.ch_count; i++)
-        out->ch[i]= out_arg[0] + i*out->bps;
+    fill_audiodata(in ,  (void*)in_arg);
+    fill_audiodata(out, out_arg);
+
+    if(s->full_convert){
+        av_assert0(!s->resample);
+        swr_audio_convert(s->full_convert, out, in, in_count);
+        return out_count;
+    }
 
 //     in_max= out_count*(int64_t)s->in_sample_rate / s->out_sample_rate + resample_filter_taps;
 //     in_count= FFMIN(in_count, in_in + 2 - s->hist_buffer_count);
@@ -361,7 +390,6 @@ static int resample(SwrContext *s, AudioData *out_param, int out_count,
     AudioData in, out, tmp;
     int ret_sum=0;
     int border=0;
-    int ch_count= s->resample_first ? s->in.ch_count : s->out.ch_count;
 
     tmp=out=*out_param;
     in =  *in_param;

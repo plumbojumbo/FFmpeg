@@ -37,6 +37,7 @@
 #undef free
 
 typedef struct CDIOContext {
+    const AVClass       *class;
     cdrom_drive_t       *drive;
     cdrom_paranoia_t *paranoia;
     int32_t last_sector;
@@ -53,7 +54,7 @@ static av_cold int read_header(AVFormatContext *ctx, AVFormatParameters *ap)
     int ret, i;
     char *err = NULL;
 
-    if (!(st = av_new_stream(ctx, 0)))
+    if (!(st = avformat_new_stream(ctx, NULL)))
         return AVERROR(ENOMEM);
     s->drive = cdio_cddap_identify(ctx->filename, CDDA_MESSAGE_LOGIT, &err);
     if (!s->drive) {
@@ -97,7 +98,7 @@ static av_cold int read_header(AVFormatContext *ctx, AVFormatParameters *ap)
     for (i = 0; i < s->drive->tracks; i++) {
         char title[16];
         snprintf(title, sizeof(title), "track %02d", s->drive->disc_toc[i].bTrack);
-        ff_new_chapter(ctx, i, st->time_base, s->drive->disc_toc[i].dwStartSector,
+        avpriv_new_chapter(ctx, i, st->time_base, s->drive->disc_toc[i].dwStartSector,
                        s->drive->disc_toc[i+1].dwStartSector, title);
     }
 
@@ -159,11 +160,11 @@ static int read_seek(AVFormatContext *ctx, int stream_index, int64_t timestamp,
 #define OFFSET(x) offsetof(CDIOContext, x)
 #define DEC AV_OPT_FLAG_DECODING_PARAM
 static const AVOption options[] = {
-    { "speed",              "Drive reading speed.", OFFSET(speed),         FF_OPT_TYPE_INT,   { 0 }, 0,       INT_MAX, DEC },
-    { "paranoia_mode",      "Error recovery mode.", OFFSET(paranoia_mode), FF_OPT_TYPE_FLAGS, { 0 }, INT_MIN, INT_MAX, DEC, "paranoia_mode" },
-        { "verify",         "Verify data integrity in overlap area", 0,    FF_OPT_TYPE_CONST, { PARANOIA_MODE_VERIFY },    0, 0, DEC, "paranoia_mode" },
-        { "overlap",        "Perform overlapped reads.",             0,    FF_OPT_TYPE_CONST, { PARANOIA_MODE_OVERLAP },   0, 0, DEC, "paranoia_mode" },
-        { "neverskip",      "Do not skip failed reads.",             0,    FF_OPT_TYPE_CONST, { PARANOIA_MODE_NEVERSKIP }, 0, 0, DEC, "paranoia_mode" },
+    { "speed",              "Drive reading speed.", OFFSET(speed),         AV_OPT_TYPE_INT,   { 0 }, 0,       INT_MAX, DEC },
+    { "paranoia_mode",      "Error recovery mode.", OFFSET(paranoia_mode), AV_OPT_TYPE_FLAGS, { 0 }, INT_MIN, INT_MAX, DEC, "paranoia_mode" },
+        { "verify",         "Verify data integrity in overlap area", 0,    AV_OPT_TYPE_CONST, { PARANOIA_MODE_VERIFY },    0, 0, DEC, "paranoia_mode" },
+        { "overlap",        "Perform overlapped reads.",             0,    AV_OPT_TYPE_CONST, { PARANOIA_MODE_OVERLAP },   0, 0, DEC, "paranoia_mode" },
+        { "neverskip",      "Do not skip failed reads.",             0,    AV_OPT_TYPE_CONST, { PARANOIA_MODE_NEVERSKIP }, 0, 0, DEC, "paranoia_mode" },
     { NULL },
 };
 

@@ -51,7 +51,7 @@ run(){
 }
 
 avconv(){
-    run $tool -v 0 -threads $threads -thread_type $thread_type "$@"
+    run $tool -nostats -threads $threads -thread_type $thread_type "$@"
 }
 
 framecrc(){
@@ -105,7 +105,7 @@ seektest(){
                  file=$(echo tests/data/$d/$file)
                  ;;
     esac
-    $target_exec $target_path/libavformat/seek-test $target_path/$file
+    run libavformat/seek-test $target_path/$file
 }
 
 mkdir -p "$outdir"

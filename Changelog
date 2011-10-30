@@ -47,7 +47,7 @@ easier to use. The changes are:
 - ashowinfo filter added
 - Windows Media Image decoder
 - amovie source added
-- LATM muxer
+- LATM muxer/demuxer
 - Speex encoder via libspeex
 - JSON output in ffprobe
 - WTV muxer
@@ -59,7 +59,18 @@ easier to use. The changes are:
 - aconvert audio filter added
 - audio support to lavfi input device added
 - libcdio-paranoia input device for audio CD grabbing
-
+- Apple ProRes decoder
+- CELT in Ogg demuxing
+- G.723.1 demuxer and decoder
+- libmodplug support (--enable-libmodplug)
+- VC-1 interlaced decoding
+- libutvideo wrapper (--enable-libutvideo)
+- aevalsrc audio source added
+- Ut Video decoder
+- Speex encoding via libspeex
+- 4:2:2 H.264 decoding support
+- Pulseaudio input device
+- Prores encoder
 
 version 0.8:
 
@@ -72,6 +83,7 @@ version 0.8:
 - Demuxer for On2's IVF format
 - Pictor/PC Paint decoder
 - HE-AAC v2 decoder
+- HE-AAC v2 encoding with libaacplus
 - libfaad2 wrapper removed
 - DTS-ES extension (XCh) decoding support
 - native VP8 decoder

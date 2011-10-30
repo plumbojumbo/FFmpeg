@@ -138,13 +138,13 @@ typedef struct {
 #define OFFSET(x) offsetof(DelogoContext, x)
 
 static const AVOption delogo_options[]= {
-    {"x",    "set logo x position",       OFFSET(x),    FF_OPT_TYPE_INT, {.dbl=-1}, -1, INT_MAX },
-    {"y",    "set logo y position",       OFFSET(y),    FF_OPT_TYPE_INT, {.dbl=-1}, -1, INT_MAX },
-    {"w",    "set logo width",            OFFSET(w),    FF_OPT_TYPE_INT, {.dbl=-1}, -1, INT_MAX },
-    {"h",    "set logo height",           OFFSET(h),    FF_OPT_TYPE_INT, {.dbl=-1}, -1, INT_MAX },
-    {"band", "set delogo area band size", OFFSET(band), FF_OPT_TYPE_INT, {.dbl= 4}, -1, INT_MAX },
-    {"t",    "set delogo area band size", OFFSET(band), FF_OPT_TYPE_INT, {.dbl= 4}, -1, INT_MAX },
-    {"show", "show delogo area",          OFFSET(show), FF_OPT_TYPE_INT, {.dbl= 0},  0, 1       },
+    {"x",    "set logo x position",       OFFSET(x),    AV_OPT_TYPE_INT, {.dbl=-1}, -1, INT_MAX },
+    {"y",    "set logo y position",       OFFSET(y),    AV_OPT_TYPE_INT, {.dbl=-1}, -1, INT_MAX },
+    {"w",    "set logo width",            OFFSET(w),    AV_OPT_TYPE_INT, {.dbl=-1}, -1, INT_MAX },
+    {"h",    "set logo height",           OFFSET(h),    AV_OPT_TYPE_INT, {.dbl=-1}, -1, INT_MAX },
+    {"band", "set delogo area band size", OFFSET(band), AV_OPT_TYPE_INT, {.dbl= 4}, -1, INT_MAX },
+    {"t",    "set delogo area band size", OFFSET(band), AV_OPT_TYPE_INT, {.dbl= 4}, -1, INT_MAX },
+    {"show", "show delogo area",          OFFSET(show), AV_OPT_TYPE_INT, {.dbl= 0},  0, 1       },
     {NULL},
 };
 
@@ -154,9 +154,9 @@ static const char *delogo_get_name(void *ctx)
 }
 
 static const AVClass delogo_class = {
-    "DelogoContext",
-    delogo_get_name,
-    delogo_options
+    .class_name = "DelogoContext",
+    .item_name  = delogo_get_name,
+    .option     = delogo_options,
 };
 
 static int query_formats(AVFilterContext *ctx)
@@ -178,7 +178,7 @@ static av_cold int init(AVFilterContext *ctx, const char *args, void *opaque)
     int ret = 0;
 
     delogo->class = &delogo_class;
-    av_opt_set_defaults2(delogo, 0, 0);
+    av_opt_set_defaults(delogo);
 
     if (args)
         ret = sscanf(args, "%d:%d:%d:%d:%d",

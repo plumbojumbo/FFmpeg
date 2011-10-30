@@ -76,6 +76,8 @@ int opt_default(const char *opt, const char *arg);
  */
 int opt_loglevel(const char *opt, const char *arg);
 
+int opt_codec_debug(const char *opt, const char *arg);
+
 /**
  * Limit the execution time.
  */
@@ -159,6 +161,12 @@ typedef struct {
 void show_help_options(const OptionDef *options, const char *msg, int mask, int value);
 
 /**
+ * Show help for all options with given flags in class and all its
+ * children.
+ */
+void show_help_children(const AVClass *class, int flags);
+
+/**
  * Parse the command line arguments.
  *
  * @param optctx an opaque options context
@@ -177,6 +185,11 @@ void parse_options(void *optctx, int argc, char **argv, const OptionDef *options
  * @return on success 1 if arg was consumed, 0 otherwise; negative number on error
  */
 int parse_option(void *optctx, const char *opt, const char *arg, const OptionDef *options);
+
+/**
+ * Find the '-loglevel' option in the commandline args and apply it.
+ */
+void parse_loglevel(int argc, char **argv, const OptionDef *options);
 
 /**
  * Check if the given stream matches a stream specifier.
@@ -349,4 +362,4 @@ void exit_program(int ret);
  */
 void *grow_array(void *array, int elem_size, int *size, int new_size);
 
-#endif /* LIBAV_CMDUTILS_H */
+#endif /* CMDUTILS_H */

@@ -70,9 +70,9 @@ static const struct {
     { "5.0",         5,  AV_CH_LAYOUT_5POINT0_BACK },
     { "5.1(side)",   6,  AV_CH_LAYOUT_5POINT1 },
     { "5.1",         6,  AV_CH_LAYOUT_5POINT1_BACK },
-    { "5.1+downmix", 8,  AV_CH_LAYOUT_5POINT1|AV_CH_LAYOUT_STEREO_DOWNMIX, },
     { "7.1",         8,  AV_CH_LAYOUT_7POINT1 },
     { "7.1(wide)",   8,  AV_CH_LAYOUT_7POINT1_WIDE },
+    { "5.1+downmix", 8,  AV_CH_LAYOUT_5POINT1|AV_CH_LAYOUT_STEREO_DOWNMIX, },
     { "7.1+downmix", 10, AV_CH_LAYOUT_7POINT1|AV_CH_LAYOUT_STEREO_DOWNMIX, },
     { 0 }
 };
@@ -130,4 +130,12 @@ int av_get_channel_layout_nb_channels(int64_t channel_layout)
     for (count = 0; x; count++)
         x &= x-1; // unset lowest set bit
     return count;
+}
+
+int64_t av_get_default_channel_layout(int nb_channels) {
+    int i;
+    for (i = 0; channel_layout_map[i].name; i++)
+        if (nb_channels == channel_layout_map[i].nb_channels)
+            return channel_layout_map[i].layout;
+    return 0;
 }

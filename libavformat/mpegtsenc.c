@@ -24,6 +24,7 @@
 #include "libavutil/dict.h"
 #include "libavutil/mathematics.h"
 #include "libavutil/opt.h"
+#include "libavutil/avassert.h"
 #include "libavcodec/mpegvideo.h"
 #include "avformat.h"
 #include "internal.h"
@@ -80,18 +81,19 @@ typedef struct MpegTSWrite {
 
 static const AVOption options[] = {
     { "mpegts_transport_stream_id", "Set transport_stream_id field.",
-      offsetof(MpegTSWrite, transport_stream_id), FF_OPT_TYPE_INT, {.dbl = 0x0001 }, 0x0001, 0xffff, AV_OPT_FLAG_ENCODING_PARAM},
+      offsetof(MpegTSWrite, transport_stream_id), AV_OPT_TYPE_INT, {.dbl = 0x0001 }, 0x0001, 0xffff, AV_OPT_FLAG_ENCODING_PARAM},
     { "mpegts_original_network_id", "Set original_network_id field.",
-      offsetof(MpegTSWrite, original_network_id), FF_OPT_TYPE_INT, {.dbl = 0x0001 }, 0x0001, 0xffff, AV_OPT_FLAG_ENCODING_PARAM},
+      offsetof(MpegTSWrite, original_network_id), AV_OPT_TYPE_INT, {.dbl = 0x0001 }, 0x0001, 0xffff, AV_OPT_FLAG_ENCODING_PARAM},
     { "mpegts_service_id", "Set service_id field.",
-      offsetof(MpegTSWrite, service_id), FF_OPT_TYPE_INT, {.dbl = 0x0001 }, 0x0001, 0xffff, AV_OPT_FLAG_ENCODING_PARAM},
+      offsetof(MpegTSWrite, service_id), AV_OPT_TYPE_INT, {.dbl = 0x0001 }, 0x0001, 0xffff, AV_OPT_FLAG_ENCODING_PARAM},
     { "mpegts_pmt_start_pid", "Set the first pid of the PMT.",
-      offsetof(MpegTSWrite, pmt_start_pid), FF_OPT_TYPE_INT, {.dbl = 0x1000 }, 0x1000, 0x1f00, AV_OPT_FLAG_ENCODING_PARAM},
+      offsetof(MpegTSWrite, pmt_start_pid), AV_OPT_TYPE_INT, {.dbl = 0x1000 }, 0x0010, 0x1f00, AV_OPT_FLAG_ENCODING_PARAM},
     { "mpegts_start_pid", "Set the first pid.",
-      offsetof(MpegTSWrite, start_pid), FF_OPT_TYPE_INT, {.dbl = 0x0100 }, 0x0100, 0x0f00, AV_OPT_FLAG_ENCODING_PARAM},
+      offsetof(MpegTSWrite, start_pid), AV_OPT_TYPE_INT, {.dbl = 0x0100 }, 0x0100, 0x0f00, AV_OPT_FLAG_ENCODING_PARAM},
     {"mpegts_m2ts_mode", "Enable m2ts mode.",
-        offsetof(MpegTSWrite, m2ts_mode), FF_OPT_TYPE_INT, {.dbl = -1 },
+        offsetof(MpegTSWrite, m2ts_mode), AV_OPT_TYPE_INT, {.dbl = -1 },
         -1,1, AV_OPT_FLAG_ENCODING_PARAM},
+    { "muxrate", NULL, offsetof(MpegTSWrite, mux_rate), AV_OPT_TYPE_INT, {1}, 0, INT_MAX, AV_OPT_FLAG_ENCODING_PARAM},
     { NULL },
 };
 
@@ -562,7 +564,10 @@ static int mpegts_write_header(AVFormatContext *s)
         service->pcr_pid = ts_st->pid;
     }
 
-    ts->mux_rate = s->mux_rate ? s->mux_rate : 1;
+#if FF_API_MUXRATE
+    if (s->mux_rate)
+        ts->mux_rate = s->mux_rate;
+#endif
 
     if (ts->mux_rate > 1) {
         service->pcr_packet_period = (ts->mux_rate * PCR_RETRANS_TIME) /
@@ -974,7 +979,7 @@ static int mpegts_write_packet(AVFormatContext *s, AVPacket *pkt)
         }
 
         do {
-            p = ff_find_start_code(p, buf_end, &state);
+            p = avpriv_mpv_find_start_code(p, buf_end, &state);
             //av_log(s, AV_LOG_INFO, "nal %d\n", state & 0x1f);
         } while (p < buf_end && (state & 0x1f) != 9 &&
                  (state & 0x1f) != 5 && (state & 0x1f) != 1);
@@ -1018,18 +1023,19 @@ static int mpegts_write_packet(AVFormatContext *s, AVPacket *pkt)
         }
     }
 
-    if (st->codec->codec_type != AVMEDIA_TYPE_AUDIO) {
-        // for video and subtitle, write a single pes packet
-        mpegts_write_pes(s, st, buf, size, pts, dts, pkt->flags & AV_PKT_FLAG_KEY);
-        av_free(data);
-        return 0;
-    }
-
-    if (ts_st->payload_index + size > DEFAULT_PES_PAYLOAD_SIZE) {
+    if (ts_st->payload_index && ts_st->payload_index + size > DEFAULT_PES_PAYLOAD_SIZE) {
         mpegts_write_pes(s, st, ts_st->payload, ts_st->payload_index,
                          ts_st->payload_pts, ts_st->payload_dts,
                          ts_st->payload_flags & AV_PKT_FLAG_KEY);
         ts_st->payload_index = 0;
+    }
+
+    if (st->codec->codec_type != AVMEDIA_TYPE_AUDIO || size > DEFAULT_PES_PAYLOAD_SIZE) {
+        av_assert0(!ts_st->payload_index);
+        // for video and subtitle, write a single pes packet
+        mpegts_write_pes(s, st, buf, size, pts, dts, pkt->flags & AV_PKT_FLAG_KEY);
+        av_free(data);
+        return 0;
     }
 
     if (!ts_st->payload_index) {

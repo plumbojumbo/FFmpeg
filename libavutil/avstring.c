@@ -51,11 +51,11 @@ int av_stristart(const char *str, const char *pfx, const char **ptr)
 char *av_stristr(const char *s1, const char *s2)
 {
     if (!*s2)
-        return s1;
+        return (char*)(intptr_t)s1;
 
     do {
         if (av_stristart(s1, s2, NULL))
-            return s1;
+            return (char*)(intptr_t)s1;
     } while (*s1++);
 
     return NULL;
@@ -158,6 +158,35 @@ char *av_get_token(const char **buf, const char *term)
     *buf = p;
 
     return ret;
+}
+
+char *av_strtok(char *s, const char *delim, char **saveptr)
+{
+    char *tok;
+
+    if (!s && !(s = *saveptr))
+        return NULL;
+
+    /* skip leading delimiters */
+    s += strspn(s, delim);
+
+    /* s now points to the first non delimiter char, or to the end of the string */
+    if (!*s) {
+        *saveptr = NULL;
+        return NULL;
+    }
+    tok = s++;
+
+    /* skip non delimiters */
+    s += strcspn(s, delim);
+    if (*s) {
+        *s = 0;
+        *saveptr = s+1;
+    } else {
+        *saveptr = NULL;
+    }
+
+    return tok;
 }
 
 #ifdef TEST

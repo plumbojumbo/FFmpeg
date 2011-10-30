@@ -19,7 +19,7 @@
 ;* Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 ;******************************************************************************
 
-%include "x86inc.asm"
+%include "libavutil/x86/x86inc.asm"
 %include "x86util.asm"
 
 SECTION_RODATA
@@ -1054,14 +1054,6 @@ emu_edge mmx
 ; void ff_vector_clip_int32(int32_t *dst, const int32_t *src, int32_t min,
 ;                           int32_t max, unsigned int len)
 ;-----------------------------------------------------------------------------
-
-%macro SPLATD_MMX 1
-    punpckldq  %1, %1
-%endmacro
-
-%macro SPLATD_SSE2 1
-    pshufd  %1, %1, 0
-%endmacro
 
 %macro VECTOR_CLIP_INT32 4
 cglobal vector_clip_int32_%1, 5,5,%2, dst, src, min, max, len

@@ -20,6 +20,7 @@
  */
 
 #include "libavutil/opt.h"
+#include "libavutil/pixdesc.h"
 #include "avcodec.h"
 #include "internal.h"
 #include <x264.h>
@@ -96,9 +97,14 @@ static int encode_nals(AVCodecContext *ctx, uint8_t *buf, int size,
 
     /* Write the SEI as part of the first frame. */
     if (x4->sei_size > 0 && nnal > 0) {
+        if (x4->sei_size > size) {
+            av_log(ctx, AV_LOG_ERROR, "Error: nal buffer is too small\n");
+            return -1;
+        }
         memcpy(p, x4->sei, x4->sei_size);
         p += x4->sei_size;
         x4->sei_size = 0;
+        av_freep(&x4->sei);
     }
 
     for (i = 0; i < nnal; i++){
@@ -109,6 +115,11 @@ static int encode_nals(AVCodecContext *ctx, uint8_t *buf, int size,
             memcpy(x4->sei, nals[i].p_payload, nals[i].i_payload);
             continue;
         }
+        if (nals[i].i_payload > (size - (p - buf))) {
+            // return only complete nals which fit in buf
+            av_log(ctx, AV_LOG_ERROR, "Error: nal buffer is too small\n");
+            break;
+        }
         memcpy(p, nals[i].p_payload, nals[i].i_payload);
         p += nals[i].i_payload;
     }
@@ -116,21 +127,43 @@ static int encode_nals(AVCodecContext *ctx, uint8_t *buf, int size,
     return p - buf;
 }
 
+static int avfmt2_num_planes(int avfmt)
+{
+    switch (avfmt) {
+    case PIX_FMT_YUV420P:
+    case PIX_FMT_YUVJ420P:
+    case PIX_FMT_YUV420P9:
+    case PIX_FMT_YUV420P10:
+    case PIX_FMT_YUV444P:
+        return 3;
+
+    case PIX_FMT_BGR24:
+    case PIX_FMT_RGB24:
+        return 1;
+
+    default:
+        return 3;
+    }
+}
+
 static int X264_frame(AVCodecContext *ctx, uint8_t *buf,
-                      int bufsize, void *data)
+                      int orig_bufsize, void *data)
 {
     X264Context *x4 = ctx->priv_data;
     AVFrame *frame = data;
     x264_nal_t *nal;
     int nnal, i;
     x264_picture_t pic_out;
+    int bufsize;
 
     x264_picture_init( &x4->pic );
-    x4->pic.img.i_csp   = X264_CSP_I420;
-    x4->pic.img.i_plane = 3;
+    x4->pic.img.i_csp   = x4->params.i_csp;
+    if (x264_bit_depth > 8)
+        x4->pic.img.i_csp |= X264_CSP_HIGH_DEPTH;
+    x4->pic.img.i_plane = avfmt2_num_planes(ctx->pix_fmt);
 
     if (frame) {
-        for (i = 0; i < 3; i++) {
+        for (i = 0; i < x4->pic.img.i_plane; i++) {
             x4->pic.img.plane[i]    = frame->data[i];
             x4->pic.img.i_stride[i] = frame->linesize[i];
         }
@@ -154,6 +187,7 @@ static int X264_frame(AVCodecContext *ctx, uint8_t *buf,
     }
 
     do {
+        bufsize = orig_bufsize;
     if (x264_encoder_encode(x4->enc, &nal, &nnal, frame? &x4->pic: NULL, &pic_out) < 0)
         return -1;
 
@@ -199,31 +233,6 @@ static av_cold int X264_close(AVCodecContext *avctx)
     return 0;
 }
 
-/**
- * Detect default settings and use default profile to avoid libx264 failure.
- */
-static void check_default_settings(AVCodecContext *avctx)
-{
-    X264Context *x4 = avctx->priv_data;
-
-    int score = 0;
-    score += x4->params.analyse.i_me_range == 0;
-    score += x4->params.rc.i_qp_step == 3;
-    score += x4->params.i_keyint_max == 12;
-    score += x4->params.rc.i_qp_min == 2;
-    score += x4->params.rc.i_qp_max == 31;
-    score += x4->params.rc.f_qcompress == 0.5;
-    score += fabs(x4->params.rc.f_ip_factor - 1.25) < 0.01;
-    score += fabs(x4->params.rc.f_pb_factor - 1.25) < 0.01;
-    score += x4->params.analyse.inter == 0 && x4->params.analyse.i_subpel_refine == 8;
-    if (score >= 5) {
-        av_log(avctx, AV_LOG_ERROR, "Default settings detected, using medium profile\n");
-        x4->preset = av_strdup("medium");
-        if (avctx->bit_rate == 200*1000)
-            avctx->crf = 23;
-    }
-}
-
 #define OPT_STR(opt, param)                                                   \
     do {                                                                      \
         int ret;                                                              \
@@ -237,6 +246,29 @@ static void check_default_settings(AVCodecContext *avctx)
             return -1;                                                        \
         }                                                                     \
     } while (0);
+
+static int convert_pix_fmt(enum PixelFormat pix_fmt)
+{
+    switch (pix_fmt) {
+    case PIX_FMT_YUV420P:
+    case PIX_FMT_YUVJ420P:
+    case PIX_FMT_YUV420P9:
+    case PIX_FMT_YUV420P10: return X264_CSP_I420;
+    case PIX_FMT_YUV422P:
+    case PIX_FMT_YUV422P10: return X264_CSP_I422;
+    case PIX_FMT_YUV444P:
+    case PIX_FMT_YUV444P9:
+    case PIX_FMT_YUV444P10: return X264_CSP_I444;
+#ifdef X264_CSP_BGR
+    case PIX_FMT_BGR24:
+        return X264_CSP_BGR;
+
+    case PIX_FMT_RGB24:
+        return X264_CSP_RGB;
+#endif
+    };
+    return 0;
+}
 
 #define PARSE_X264_OPT(name, var)\
     if (x4->var && x264_param_parse(&x4->params, name, x4->var) < 0) {\
@@ -267,6 +299,7 @@ static av_cold int X264_init(AVCodecContext *avctx)
     x4->params.pf_log               = X264_log;
     x4->params.p_log_private        = avctx;
     x4->params.i_log_level          = X264_LOG_DEBUG;
+    x4->params.i_csp                = convert_pix_fmt(avctx->pix_fmt);
 
     OPT_STR("weightp", x4->wpredp);
 
@@ -523,55 +556,88 @@ static av_cold int X264_init(AVCodecContext *avctx)
     return 0;
 }
 
+static const enum PixelFormat pix_fmts_8bit[] = {
+    PIX_FMT_YUV420P,
+    PIX_FMT_YUVJ420P,
+    PIX_FMT_YUV422P,
+    PIX_FMT_YUV444P,
+#ifdef X264_CSP_BGR
+    PIX_FMT_BGR24,
+    PIX_FMT_RGB24,
+#endif
+    PIX_FMT_NONE
+};
+static const enum PixelFormat pix_fmts_9bit[] = {
+    PIX_FMT_YUV420P9,
+    PIX_FMT_YUV444P9,
+    PIX_FMT_NONE
+};
+static const enum PixelFormat pix_fmts_10bit[] = {
+    PIX_FMT_YUV420P10,
+    PIX_FMT_YUV422P10,
+    PIX_FMT_YUV444P10,
+    PIX_FMT_NONE
+};
+
+static av_cold void X264_init_static(AVCodec *codec)
+{
+    if (x264_bit_depth == 8)
+        codec->pix_fmts = pix_fmts_8bit;
+    else if (x264_bit_depth == 9)
+        codec->pix_fmts = pix_fmts_9bit;
+    else if (x264_bit_depth == 10)
+        codec->pix_fmts = pix_fmts_10bit;
+}
+
 #define OFFSET(x) offsetof(X264Context, x)
 #define VE AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_ENCODING_PARAM
 static const AVOption options[] = {
-    { "preset",        "Set the encoding preset (cf. x264 --fullhelp)",   OFFSET(preset),        FF_OPT_TYPE_STRING, { .str = "medium" }, 0, 0, VE},
-    { "tune",          "Tune the encoding params (cf. x264 --fullhelp)",  OFFSET(tune),          FF_OPT_TYPE_STRING, { 0 }, 0, 0, VE},
-    { "profile",       "Set profile restrictions (cf. x264 --fullhelp) ", OFFSET(profile),       FF_OPT_TYPE_STRING, { 0 }, 0, 0, VE},
-    { "fastfirstpass", "Use fast settings when encoding first pass",      OFFSET(fastfirstpass), FF_OPT_TYPE_INT,    { 1 }, 0, 1, VE},
-    {"level", "Specify level (as defined by Annex A)", OFFSET(level), FF_OPT_TYPE_STRING, {.str=NULL}, 0, 0, VE},
-    {"passlogfile", "Filename for 2 pass stats", OFFSET(stats), FF_OPT_TYPE_STRING, {.str=NULL}, 0, 0, VE},
-    {"wpredp", "Weighted prediction for P-frames", OFFSET(wpredp), FF_OPT_TYPE_STRING, {.str=NULL}, 0, 0, VE},
-    {"x264opts", "x264 options", OFFSET(x264opts), FF_OPT_TYPE_STRING, {.str=NULL}, 0, 0, VE},
-    { "crf",           "Select the quality for constant quality mode",    OFFSET(crf),           FF_OPT_TYPE_FLOAT,  {-1 }, -1, FLT_MAX, VE },
-    { "crf_max",       "In CRF mode, prevents VBV from lowering quality beyond this point.",OFFSET(crf_max), FF_OPT_TYPE_FLOAT, {-1 }, -1, FLT_MAX, VE },
-    { "qp",            "Constant quantization parameter rate control method",OFFSET(cqp),        FF_OPT_TYPE_INT,    {-1 }, -1, INT_MAX, VE },
-    { "aq-mode",       "AQ method",                                       OFFSET(aq_mode),       FF_OPT_TYPE_INT,    {-1 }, -1, INT_MAX, VE, "aq_mode"},
-    { "none",          NULL,                              0, FF_OPT_TYPE_CONST, {X264_AQ_NONE},         INT_MIN, INT_MAX, VE, "aq_mode" },
-    { "variance",      "Variance AQ (complexity mask)",   0, FF_OPT_TYPE_CONST, {X264_AQ_VARIANCE},     INT_MIN, INT_MAX, VE, "aq_mode" },
-    { "autovariance",  "Auto-variance AQ (experimental)", 0, FF_OPT_TYPE_CONST, {X264_AQ_AUTOVARIANCE}, INT_MIN, INT_MAX, VE, "aq_mode" },
-    { "aq-strength",   "AQ strength. Reduces blocking and blurring in flat and textured areas.", OFFSET(aq_strength), FF_OPT_TYPE_FLOAT, {-1}, -1, FLT_MAX, VE},
-    { "psy",           "Use psychovisual optimizations.",                 OFFSET(psy),           FF_OPT_TYPE_INT,    {-1 }, -1, 1, VE },
-    { "psy-rd",        "Strength of psychovisual optimization, in <psy-rd>:<psy-trellis> format.", OFFSET(psy_rd), FF_OPT_TYPE_STRING,  {0 }, 0, 0, VE},
-    { "rc-lookahead",  "Number of frames to look ahead for frametype and ratecontrol", OFFSET(rc_lookahead), FF_OPT_TYPE_INT, {-1 }, -1, INT_MAX, VE },
-    { "weightb",       "Weighted prediction for B-frames.",               OFFSET(weightb),       FF_OPT_TYPE_INT,    {-1 }, -1, 1, VE },
-    { "weightp",       "Weighted prediction analysis method.",            OFFSET(weightp),       FF_OPT_TYPE_INT,    {-1 }, -1, INT_MAX, VE, "weightp" },
-    { "none",          NULL, 0, FF_OPT_TYPE_CONST, {X264_WEIGHTP_NONE},   INT_MIN, INT_MAX, VE, "weightp" },
-    { "simple",        NULL, 0, FF_OPT_TYPE_CONST, {X264_WEIGHTP_SIMPLE}, INT_MIN, INT_MAX, VE, "weightp" },
-    { "smart",         NULL, 0, FF_OPT_TYPE_CONST, {X264_WEIGHTP_SMART},  INT_MIN, INT_MAX, VE, "weightp" },
-    { "ssim",          "Calculate and print SSIM stats.",                 OFFSET(ssim),          FF_OPT_TYPE_INT,    {-1 }, -1, 1, VE },
-    { "intra-refresh", "Use Periodic Intra Refresh instead of IDR frames.",OFFSET(intra_refresh),FF_OPT_TYPE_INT,    {-1 }, -1, 1, VE },
-    { "b-bias",        "Influences how often B-frames are used",          OFFSET(b_bias),        FF_OPT_TYPE_INT,    {INT_MIN}, INT_MIN, INT_MAX, VE },
-    { "b-pyramid",     "Keep some B-frames as references.",               OFFSET(b_pyramid),     FF_OPT_TYPE_INT,    {-1 }, -1, INT_MAX, VE, "b_pyramid" },
-    { "none",          NULL,                                  0, FF_OPT_TYPE_CONST, {X264_B_PYRAMID_NONE},   INT_MIN, INT_MAX, VE, "b_pyramid" },
-    { "strict",        "Strictly hierarchical pyramid",       0, FF_OPT_TYPE_CONST, {X264_B_PYRAMID_STRICT}, INT_MIN, INT_MAX, VE, "b_pyramid" },
-    { "normal",        "Non-strict (not Blu-ray compatible)", 0, FF_OPT_TYPE_CONST, {X264_B_PYRAMID_NORMAL}, INT_MIN, INT_MAX, VE, "b_pyramid" },
-    { "mixed-refs",    "One reference per partition, as opposed to one reference per macroblock", OFFSET(mixed_refs), FF_OPT_TYPE_INT, {-1}, -1, 1, VE },
-    { "8x8dct",        "High profile 8x8 transform.",                     OFFSET(dct8x8),        FF_OPT_TYPE_INT,    {-1 }, -1, 1, VE},
-    { "fast-pskip",    NULL,                                              OFFSET(fast_pskip),    FF_OPT_TYPE_INT,    {-1 }, -1, 1, VE},
-    { "aud",           "Use access unit delimiters.",                     OFFSET(aud),           FF_OPT_TYPE_INT,    {-1 }, -1, 1, VE},
-    { "mbtree",        "Use macroblock tree ratecontrol.",                OFFSET(mbtree),        FF_OPT_TYPE_INT,    {-1 }, -1, 1, VE},
-    { "deblock",       "Loop filter parameters, in <alpha:beta> form.",   OFFSET(deblock),       FF_OPT_TYPE_STRING, { 0 },  0, 0, VE},
-    { "cplxblur",      "Reduce fluctuations in QP (before curve compression)", OFFSET(cplxblur), FF_OPT_TYPE_FLOAT,  {-1 }, -1, FLT_MAX, VE},
+    { "preset",        "Set the encoding preset (cf. x264 --fullhelp)",   OFFSET(preset),        AV_OPT_TYPE_STRING, { .str = "medium" }, 0, 0, VE},
+    { "tune",          "Tune the encoding params (cf. x264 --fullhelp)",  OFFSET(tune),          AV_OPT_TYPE_STRING, { 0 }, 0, 0, VE},
+    { "profile",       "Set profile restrictions (cf. x264 --fullhelp) ", OFFSET(profile),       AV_OPT_TYPE_STRING, { 0 }, 0, 0, VE},
+    { "fastfirstpass", "Use fast settings when encoding first pass",      OFFSET(fastfirstpass), AV_OPT_TYPE_INT,    { 1 }, 0, 1, VE},
+    {"level", "Specify level (as defined by Annex A)", OFFSET(level), AV_OPT_TYPE_STRING, {.str=NULL}, 0, 0, VE},
+    {"passlogfile", "Filename for 2 pass stats", OFFSET(stats), AV_OPT_TYPE_STRING, {.str=NULL}, 0, 0, VE},
+    {"wpredp", "Weighted prediction for P-frames", OFFSET(wpredp), AV_OPT_TYPE_STRING, {.str=NULL}, 0, 0, VE},
+    {"x264opts", "x264 options", OFFSET(x264opts), AV_OPT_TYPE_STRING, {.str=NULL}, 0, 0, VE},
+    { "crf",           "Select the quality for constant quality mode",    OFFSET(crf),           AV_OPT_TYPE_FLOAT,  {-1 }, -1, FLT_MAX, VE },
+    { "crf_max",       "In CRF mode, prevents VBV from lowering quality beyond this point.",OFFSET(crf_max), AV_OPT_TYPE_FLOAT, {-1 }, -1, FLT_MAX, VE },
+    { "qp",            "Constant quantization parameter rate control method",OFFSET(cqp),        AV_OPT_TYPE_INT,    {-1 }, -1, INT_MAX, VE },
+    { "aq-mode",       "AQ method",                                       OFFSET(aq_mode),       AV_OPT_TYPE_INT,    {-1 }, -1, INT_MAX, VE, "aq_mode"},
+    { "none",          NULL,                              0, AV_OPT_TYPE_CONST, {X264_AQ_NONE},         INT_MIN, INT_MAX, VE, "aq_mode" },
+    { "variance",      "Variance AQ (complexity mask)",   0, AV_OPT_TYPE_CONST, {X264_AQ_VARIANCE},     INT_MIN, INT_MAX, VE, "aq_mode" },
+    { "autovariance",  "Auto-variance AQ (experimental)", 0, AV_OPT_TYPE_CONST, {X264_AQ_AUTOVARIANCE}, INT_MIN, INT_MAX, VE, "aq_mode" },
+    { "aq-strength",   "AQ strength. Reduces blocking and blurring in flat and textured areas.", OFFSET(aq_strength), AV_OPT_TYPE_FLOAT, {-1}, -1, FLT_MAX, VE},
+    { "psy",           "Use psychovisual optimizations.",                 OFFSET(psy),           AV_OPT_TYPE_INT,    {-1 }, -1, 1, VE },
+    { "psy-rd",        "Strength of psychovisual optimization, in <psy-rd>:<psy-trellis> format.", OFFSET(psy_rd), AV_OPT_TYPE_STRING,  {0 }, 0, 0, VE},
+    { "rc-lookahead",  "Number of frames to look ahead for frametype and ratecontrol", OFFSET(rc_lookahead), AV_OPT_TYPE_INT, {-1 }, -1, INT_MAX, VE },
+    { "weightb",       "Weighted prediction for B-frames.",               OFFSET(weightb),       AV_OPT_TYPE_INT,    {-1 }, -1, 1, VE },
+    { "weightp",       "Weighted prediction analysis method.",            OFFSET(weightp),       AV_OPT_TYPE_INT,    {-1 }, -1, INT_MAX, VE, "weightp" },
+    { "none",          NULL, 0, AV_OPT_TYPE_CONST, {X264_WEIGHTP_NONE},   INT_MIN, INT_MAX, VE, "weightp" },
+    { "simple",        NULL, 0, AV_OPT_TYPE_CONST, {X264_WEIGHTP_SIMPLE}, INT_MIN, INT_MAX, VE, "weightp" },
+    { "smart",         NULL, 0, AV_OPT_TYPE_CONST, {X264_WEIGHTP_SMART},  INT_MIN, INT_MAX, VE, "weightp" },
+    { "ssim",          "Calculate and print SSIM stats.",                 OFFSET(ssim),          AV_OPT_TYPE_INT,    {-1 }, -1, 1, VE },
+    { "intra-refresh", "Use Periodic Intra Refresh instead of IDR frames.",OFFSET(intra_refresh),AV_OPT_TYPE_INT,    {-1 }, -1, 1, VE },
+    { "b-bias",        "Influences how often B-frames are used",          OFFSET(b_bias),        AV_OPT_TYPE_INT,    {INT_MIN}, INT_MIN, INT_MAX, VE },
+    { "b-pyramid",     "Keep some B-frames as references.",               OFFSET(b_pyramid),     AV_OPT_TYPE_INT,    {-1 }, -1, INT_MAX, VE, "b_pyramid" },
+    { "none",          NULL,                                  0, AV_OPT_TYPE_CONST, {X264_B_PYRAMID_NONE},   INT_MIN, INT_MAX, VE, "b_pyramid" },
+    { "strict",        "Strictly hierarchical pyramid",       0, AV_OPT_TYPE_CONST, {X264_B_PYRAMID_STRICT}, INT_MIN, INT_MAX, VE, "b_pyramid" },
+    { "normal",        "Non-strict (not Blu-ray compatible)", 0, AV_OPT_TYPE_CONST, {X264_B_PYRAMID_NORMAL}, INT_MIN, INT_MAX, VE, "b_pyramid" },
+    { "mixed-refs",    "One reference per partition, as opposed to one reference per macroblock", OFFSET(mixed_refs), AV_OPT_TYPE_INT, {-1}, -1, 1, VE },
+    { "8x8dct",        "High profile 8x8 transform.",                     OFFSET(dct8x8),        AV_OPT_TYPE_INT,    {-1 }, -1, 1, VE},
+    { "fast-pskip",    NULL,                                              OFFSET(fast_pskip),    AV_OPT_TYPE_INT,    {-1 }, -1, 1, VE},
+    { "aud",           "Use access unit delimiters.",                     OFFSET(aud),           AV_OPT_TYPE_INT,    {-1 }, -1, 1, VE},
+    { "mbtree",        "Use macroblock tree ratecontrol.",                OFFSET(mbtree),        AV_OPT_TYPE_INT,    {-1 }, -1, 1, VE},
+    { "deblock",       "Loop filter parameters, in <alpha:beta> form.",   OFFSET(deblock),       AV_OPT_TYPE_STRING, { 0 },  0, 0, VE},
+    { "cplxblur",      "Reduce fluctuations in QP (before curve compression)", OFFSET(cplxblur), AV_OPT_TYPE_FLOAT,  {-1 }, -1, FLT_MAX, VE},
     { "partitions",    "A comma-separated list of partitions to consider. "
-                       "Possible values: p8x8, p4x4, b8x8, i8x8, i4x4, none, all", OFFSET(partitions), FF_OPT_TYPE_STRING, { 0 }, 0, 0, VE},
-    { "direct-pred",   "Direct MV prediction mode",                       OFFSET(direct_pred),   FF_OPT_TYPE_INT,    {-1 }, -1, INT_MAX, VE, "direct-pred" },
-    { "none",          NULL,      0,    FF_OPT_TYPE_CONST, { X264_DIRECT_PRED_NONE },     0, 0, VE, "direct-pred" },
-    { "spatial",       NULL,      0,    FF_OPT_TYPE_CONST, { X264_DIRECT_PRED_SPATIAL },  0, 0, VE, "direct-pred" },
-    { "temporal",      NULL,      0,    FF_OPT_TYPE_CONST, { X264_DIRECT_PRED_TEMPORAL }, 0, 0, VE, "direct-pred" },
-    { "auto",          NULL,      0,    FF_OPT_TYPE_CONST, { X264_DIRECT_PRED_AUTO },     0, 0, VE, "direct-pred" },
-    { "slice-max-size","Constant quantization parameter rate control method",OFFSET(slice_max_size),        FF_OPT_TYPE_INT,    {-1 }, -1, INT_MAX, VE },
+                       "Possible values: p8x8, p4x4, b8x8, i8x8, i4x4, none, all", OFFSET(partitions), AV_OPT_TYPE_STRING, { 0 }, 0, 0, VE},
+    { "direct-pred",   "Direct MV prediction mode",                       OFFSET(direct_pred),   AV_OPT_TYPE_INT,    {-1 }, -1, INT_MAX, VE, "direct-pred" },
+    { "none",          NULL,      0,    AV_OPT_TYPE_CONST, { X264_DIRECT_PRED_NONE },     0, 0, VE, "direct-pred" },
+    { "spatial",       NULL,      0,    AV_OPT_TYPE_CONST, { X264_DIRECT_PRED_SPATIAL },  0, 0, VE, "direct-pred" },
+    { "temporal",      NULL,      0,    AV_OPT_TYPE_CONST, { X264_DIRECT_PRED_TEMPORAL }, 0, 0, VE, "direct-pred" },
+    { "auto",          NULL,      0,    AV_OPT_TYPE_CONST, { X264_DIRECT_PRED_AUTO },     0, 0, VE, "direct-pred" },
+    { "slice-max-size","Constant quantization parameter rate control method",OFFSET(slice_max_size),        AV_OPT_TYPE_INT,    {-1 }, -1, INT_MAX, VE },
     { NULL },
 };
 
@@ -617,8 +683,8 @@ AVCodec ff_libx264_encoder = {
     .encode         = X264_frame,
     .close          = X264_close,
     .capabilities   = CODEC_CAP_DELAY,
-    .pix_fmts       = (const enum PixelFormat[]) { PIX_FMT_YUV420P, PIX_FMT_YUVJ420P, PIX_FMT_NONE },
     .long_name      = NULL_IF_CONFIG_SMALL("libx264 H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10"),
     .priv_class     = &class,
     .defaults       = x264_defaults,
+    .init_static_data = X264_init_static,
 };

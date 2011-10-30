@@ -62,10 +62,6 @@ static uint32_t v2_dc_chroma_table[512][2];
 /* vc1 externs */
 extern const uint8_t wmv3_dc_scale_table[32];
 
-#ifdef DEBUG
-int frame_count = 0;
-#endif
-
 #include "msmpeg4data.h"
 
 #if CONFIG_ENCODERS //strangely gcc includes this even if it is not referenced
@@ -355,7 +351,7 @@ void msmpeg4_encode_picture_header(MpegEncContext * s, int picture_number)
 {
     find_best_tables(s);
 
-    align_put_bits(&s->pb);
+    avpriv_align_put_bits(&s->pb);
     put_bits(&s->pb, 2, s->pict_type - 1);
 
     put_bits(&s->pb, 5, s->qscale);

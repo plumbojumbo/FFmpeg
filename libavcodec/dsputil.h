@@ -204,6 +204,8 @@ typedef struct ScanTable{
 } ScanTable;
 
 void ff_init_scantable(uint8_t *, ScanTable *st, const uint8_t *src_scantable);
+void ff_init_scantable_permutation(uint8_t *idct_permutation,
+                                   int idct_permutation_type);
 
 #define EMULATED_EDGE(depth) \
 void ff_emulated_edge_mc_ ## depth (uint8_t *buf, const uint8_t *src, int linesize,\
@@ -422,6 +424,17 @@ typedef struct DSPContext {
      * @param len length of vector, multiple of 4
      */
     void (*vector_fmul_scalar)(float *dst, const float *src, float mul,
+                               int len);
+    /**
+     * Multiply a vector of floats by a scalar float and add to
+     * destination vector.  Source and destination vectors must
+     * overlap exactly or not at all.
+     * @param dst result vector, 16-byte aligned
+     * @param src input vector, 16-byte aligned
+     * @param mul scalar value
+     * @param len length of vector, multiple of 4
+     */
+    void (*vector_fmac_scalar)(float *dst, const float *src, float mul,
                                int len);
     /**
      * Calculate the scalar product of two vectors of floats.

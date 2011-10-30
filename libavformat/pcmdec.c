@@ -49,31 +49,29 @@ static int raw_read_packet(AVFormatContext *s, AVPacket *pkt)
 }
 
 static const AVOption pcm_options[] = {
-    { "sample_rate", "", offsetof(RawAudioDemuxerContext, sample_rate), FF_OPT_TYPE_INT, {.dbl = 0}, 0, INT_MAX, AV_OPT_FLAG_DECODING_PARAM },
-    { "channels",    "", offsetof(RawAudioDemuxerContext, channels),    FF_OPT_TYPE_INT, {.dbl = 0}, 0, INT_MAX, AV_OPT_FLAG_DECODING_PARAM },
+    { "sample_rate", "", offsetof(RawAudioDemuxerContext, sample_rate), AV_OPT_TYPE_INT, {.dbl = 0}, 0, INT_MAX, AV_OPT_FLAG_DECODING_PARAM },
+    { "channels",    "", offsetof(RawAudioDemuxerContext, channels),    AV_OPT_TYPE_INT, {.dbl = 0}, 0, INT_MAX, AV_OPT_FLAG_DECODING_PARAM },
     { NULL },
 };
 
-#define PCMDEF(name, long_name, ext, codec) \
-static const AVClass name ## _demuxer_class = {\
-    .class_name = #name " demuxer",\
-    .item_name  = av_default_item_name,\
-    .option     = pcm_options,\
-    .version    = LIBAVUTIL_VERSION_INT,\
-};\
-AVInputFormat ff_pcm_ ## name ## _demuxer = {\
-    #name,\
-    NULL_IF_CONFIG_SMALL(long_name),\
-    sizeof(RawAudioDemuxerContext),\
-    NULL,\
-    ff_raw_read_header,\
-    raw_read_packet,\
-    NULL,\
-    pcm_read_seek,\
-    .flags= AVFMT_GENERIC_INDEX,\
-    .extensions = ext,\
-    .value = codec,\
-    .priv_class = &name ## _demuxer_class,\
+#define PCMDEF(name_, long_name_, ext, codec)               \
+static const AVClass name_ ## _demuxer_class = {            \
+    .class_name = #name_ " demuxer",                        \
+    .item_name  = av_default_item_name,                     \
+    .option     = pcm_options,                              \
+    .version    = LIBAVUTIL_VERSION_INT,                    \
+};                                                          \
+AVInputFormat ff_pcm_ ## name_ ## _demuxer = {              \
+    .name           = #name_,                               \
+    .long_name      = NULL_IF_CONFIG_SMALL(long_name_),     \
+    .priv_data_size = sizeof(RawAudioDemuxerContext),       \
+    .read_header    = ff_raw_read_header,                   \
+    .read_packet    = raw_read_packet,                      \
+    .read_seek      = pcm_read_seek,                        \
+    .flags          = AVFMT_GENERIC_INDEX,                  \
+    .extensions     = ext,                                  \
+    .value          = codec,                                \
+    .priv_class     = &name_ ## _demuxer_class,             \
 };
 
 PCMDEF(f64be, "PCM 64 bit floating-point big-endian format",

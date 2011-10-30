@@ -20,7 +20,7 @@
 
 /**
  * @file
- * filter fow showing textual audio frame information
+ * filter for showing textual audio frame information
  */
 
 #include "libavutil/adler32.h"
@@ -45,10 +45,14 @@ static void filter_samples(AVFilterLink *inlink, AVFilterBufferRef *samplesref)
     uint32_t plane_checksum[8] = {0}, checksum = 0;
     char chlayout_str[128];
     int plane;
+    int linesize =
+        samplesref->audio->nb_samples *
+        av_get_bytes_per_sample(samplesref->format);
+    if (!samplesref->audio->planar) /* packed layout */
+        linesize *= av_get_channel_layout_nb_channels(samplesref->audio->channel_layout);
 
     for (plane = 0; samplesref->data[plane] && plane < 8; plane++) {
         uint8_t *data = samplesref->data[plane];
-        int linesize = samplesref->linesize[plane];
 
         plane_checksum[plane] = av_adler32_update(plane_checksum[plane],
                                                   data, linesize);
@@ -61,7 +65,7 @@ static void filter_samples(AVFilterLink *inlink, AVFilterBufferRef *samplesref)
     av_log(ctx, AV_LOG_INFO,
            "n:%d pts:%"PRId64" pts_time:%f pos:%"PRId64" "
            "fmt:%s chlayout:%s nb_samples:%d rate:%d planar:%d "
-           "checksum:%u plane_checksum[%u %u %u %u %u %u %u %u]\n",
+           "checksum:%08X plane_checksum[%08X %08X %08X %08X %08X %08X %08X %08X]\n",
            showinfo->frame,
            samplesref->pts, samplesref->pts * av_q2d(inlink->time_base),
            samplesref->pos,

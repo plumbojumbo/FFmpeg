@@ -27,6 +27,7 @@
 
 #include "avcodec.h"
 #include "dsputil.h"
+#include "mathops.h"
 #include "mpegvideo.h"
 
 #include "mpeg12.h"
@@ -120,7 +121,7 @@ static int find_frame_rate_index(MpegEncContext *s){
     int64_t d;
 
     for(i=1;i<14;i++) {
-        int64_t n0= 1001LL/ff_frame_rate_tab[i].den*ff_frame_rate_tab[i].num*s->avctx->time_base.num;
+        int64_t n0= 1001LL/avpriv_frame_rate_tab[i].den*avpriv_frame_rate_tab[i].num*s->avctx->time_base.num;
         int64_t n1= 1001LL*s->avctx->time_base.den;
         if(s->avctx->strict_std_compliance > FF_COMPLIANCE_UNOFFICIAL && i>=9) break;
 
@@ -189,7 +190,7 @@ static av_cold int encode_init(AVCodecContext *avctx)
     }
 
     if (s->tc.str) {
-        s->tc.rate = ff_frame_rate_tab[s->frame_rate_index];
+        s->tc.rate = avpriv_frame_rate_tab[s->frame_rate_index];
         if (ff_init_smtpe_timecode(s, &s->tc) < 0)
             return -1;
         s->avctx->timecode_frame_start = s->tc.start;
@@ -199,7 +200,7 @@ static av_cold int encode_init(AVCodecContext *avctx)
 
 static void put_header(MpegEncContext *s, int header)
 {
-    align_put_bits(&s->pb);
+    avpriv_align_put_bits(&s->pb);
     put_bits(&s->pb, 16, header>>16);
     put_sbits(&s->pb, 16, header);
 }
@@ -218,7 +219,7 @@ static void mpeg1_encode_sequence_header(MpegEncContext *s)
         if(aspect_ratio==0.0) aspect_ratio= 1.0; //pixel aspect 1:1 (VGA)
 
         if (s->current_picture.f.key_frame) {
-            AVRational framerate= ff_frame_rate_tab[s->frame_rate_index];
+            AVRational framerate= avpriv_frame_rate_tab[s->frame_rate_index];
 
             /* mpeg1 header repeated every gop */
             put_header(s, SEQ_START_CODE);
@@ -694,8 +695,7 @@ static void mpeg1_encode_motion(MpegEncContext *s, int val, int f_or_b_code)
         int bit_size = f_or_b_code - 1;
         int range = 1 << bit_size;
         /* modulo encoding */
-        int l= INT_BIT - 5 - bit_size;
-        val= (val<<l)>>l;
+        val = sign_extend(val, 5 + bit_size);
 
         if (val >= 0) {
             val--;
@@ -943,9 +943,9 @@ static void mpeg1_encode_block(MpegEncContext *s,
 #define COMMON_OPTS\
         {TIMECODE_OPT(MpegEncContext,\
          AV_OPT_FLAG_ENCODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM)},\
-    { "intra_vlc",           "Use MPEG-2 intra VLC table.",       OFFSET(intra_vlc_format),    FF_OPT_TYPE_INT, { 0 }, 0, 1, VE },\
-    { "drop_frame_timecode", "Timecode is in drop frame format.", OFFSET(drop_frame_timecode), FF_OPT_TYPE_INT, { 0 }, 0, 1, VE}, \
-    { "scan_offset",         "Reserve space for SVCD scan offset user data.", OFFSET(scan_offset), FF_OPT_TYPE_INT, { 0 }, 0, 1, VE },
+    { "intra_vlc",           "Use MPEG-2 intra VLC table.",       OFFSET(intra_vlc_format),    AV_OPT_TYPE_INT, { 0 }, 0, 1, VE },\
+    { "drop_frame_timecode", "Timecode is in drop frame format.", OFFSET(drop_frame_timecode), AV_OPT_TYPE_INT, { 0 }, 0, 1, VE}, \
+    { "scan_offset",         "Reserve space for SVCD scan offset user data.", OFFSET(scan_offset), AV_OPT_TYPE_INT, { 0 }, 0, 1, VE },
 
 static const AVOption mpeg1_options[] = {
     COMMON_OPTS
@@ -954,8 +954,8 @@ static const AVOption mpeg1_options[] = {
 
 static const AVOption mpeg2_options[] = {
     COMMON_OPTS
-    { "non_linear_quant",    "Use nonlinear quantizer.",          OFFSET(q_scale_type),         FF_OPT_TYPE_INT, { 0 }, 0, 1, VE },
-    { "alternate_scan",      "Enable alternate scantable.",       OFFSET(alternate_scan),       FF_OPT_TYPE_INT, { 0 }, 0, 1, VE },
+    { "non_linear_quant",    "Use nonlinear quantizer.",          OFFSET(q_scale_type),         AV_OPT_TYPE_INT, { 0 }, 0, 1, VE },
+    { "alternate_scan",      "Enable alternate scantable.",       OFFSET(alternate_scan),       AV_OPT_TYPE_INT, { 0 }, 0, 1, VE },
     { NULL },
 };
 
@@ -978,7 +978,7 @@ AVCodec ff_mpeg1video_encoder = {
     .init           = encode_init,
     .encode         = MPV_encode_picture,
     .close          = MPV_encode_end,
-    .supported_framerates= ff_frame_rate_tab+1,
+    .supported_framerates= avpriv_frame_rate_tab+1,
     .pix_fmts= (const enum PixelFormat[]){PIX_FMT_YUV420P, PIX_FMT_NONE},
     .capabilities= CODEC_CAP_DELAY | CODEC_CAP_SLICE_THREADS,
     .long_name= NULL_IF_CONFIG_SMALL("MPEG-1 video"),
@@ -993,7 +993,7 @@ AVCodec ff_mpeg2video_encoder = {
     .init           = encode_init,
     .encode         = MPV_encode_picture,
     .close          = MPV_encode_end,
-    .supported_framerates= ff_frame_rate_tab+1,
+    .supported_framerates= avpriv_frame_rate_tab+1,
     .pix_fmts= (const enum PixelFormat[]){PIX_FMT_YUV420P, PIX_FMT_YUV422P, PIX_FMT_NONE},
     .capabilities= CODEC_CAP_DELAY | CODEC_CAP_SLICE_THREADS,
     .long_name= NULL_IF_CONFIG_SMALL("MPEG-2 video"),

@@ -36,6 +36,7 @@ const AVCodecTag ff_codec_bmp_tags[] = {
     { CODEC_ID_H264,         MKTAG('a', 'v', 'c', '1') },
     { CODEC_ID_H264,         MKTAG('D', 'A', 'V', 'C') },
     { CODEC_ID_H264,         MKTAG('V', 'S', 'S', 'H') },
+    { CODEC_ID_H264,         MKTAG('Q', '2', '6', '4') }, /* QNAP surveillance system */
     { CODEC_ID_H263,         MKTAG('H', '2', '6', '3') },
     { CODEC_ID_H263,         MKTAG('X', '2', '6', '3') },
     { CODEC_ID_H263,         MKTAG('T', '2', '6', '3') },
@@ -88,6 +89,7 @@ const AVCodecTag ff_codec_bmp_tags[] = {
     { CODEC_ID_MPEG4,        MKTAG('S', 'I', 'P', 'P') }, /* Samsung SHR-6040 */
     { CODEC_ID_MPEG4,        MKTAG('X', 'V', 'I', 'X') },
     { CODEC_ID_MPEG4,        MKTAG('D', 'r', 'e', 'X') },
+    { CODEC_ID_MPEG4,        MKTAG('Q', 'M', 'P', '4') }, /* QNAP Systems */
     { CODEC_ID_MSMPEG4V3,    MKTAG('M', 'P', '4', '3') },
     { CODEC_ID_MSMPEG4V3,    MKTAG('D', 'I', 'V', '3') },
     { CODEC_ID_MSMPEG4V3,    MKTAG('M', 'P', 'G', '3') },
@@ -179,8 +181,8 @@ const AVCodecTag ff_codec_bmp_tags[] = {
     { CODEC_ID_RAWVIDEO,     MKTAG('U', 'Y', 'V', 'Y') },
     { CODEC_ID_RAWVIDEO,     MKTAG('V', 'Y', 'U', 'Y') },
     { CODEC_ID_RAWVIDEO,     MKTAG('I', 'Y', 'U', 'V') },
-    { CODEC_ID_RAWVIDEO,     MKTAG('Y', '8', ' ', ' ') },
     { CODEC_ID_RAWVIDEO,     MKTAG('Y', '8', '0', '0') },
+    { CODEC_ID_RAWVIDEO,     MKTAG('Y', '8', ' ', ' ') },
     { CODEC_ID_RAWVIDEO,     MKTAG('H', 'D', 'Y', 'C') },
     { CODEC_ID_RAWVIDEO,     MKTAG('Y', 'V', 'U', '9') },
     { CODEC_ID_RAWVIDEO,     MKTAG('V', 'D', 'T', 'Z') }, /* SoftLab-NSK VideoTizer */
@@ -258,6 +260,8 @@ const AVCodecTag ff_codec_bmp_tags[] = {
     { CODEC_ID_CAVS,         MKTAG('C', 'A', 'V', 'S') },
     { CODEC_ID_JPEG2000,     MKTAG('m', 'j', 'p', '2') },
     { CODEC_ID_JPEG2000,     MKTAG('M', 'J', '2', 'C') },
+    { CODEC_ID_JPEG2000,     MKTAG('L', 'J', '2', 'C') },
+    { CODEC_ID_JPEG2000,     MKTAG('L', 'J', '2', 'K') },
     { CODEC_ID_VMNC,         MKTAG('V', 'M', 'n', 'c') },
     { CODEC_ID_TARGA,        MKTAG('t', 'g', 'a', ' ') },
     { CODEC_ID_PNG,          MKTAG('M', 'P', 'N', 'G') },
@@ -276,6 +280,11 @@ const AVCodecTag ff_codec_bmp_tags[] = {
     { CODEC_ID_G2M,          MKTAG('G', '2', 'M', '2') },
     { CODEC_ID_G2M,          MKTAG('G', '2', 'M', '3') },
     { CODEC_ID_G2M,          MKTAG('G', '2', 'M', '4') },
+    { CODEC_ID_AMV,          MKTAG('A', 'M', 'V', 'F') },
+    { CODEC_ID_UTVIDEO,      MKTAG('U', 'L', 'R', 'A') },
+    { CODEC_ID_UTVIDEO,      MKTAG('U', 'L', 'R', 'G') },
+    { CODEC_ID_UTVIDEO,      MKTAG('U', 'L', 'Y', '0') },
+    { CODEC_ID_UTVIDEO,      MKTAG('U', 'L', 'Y', '2') },
     { CODEC_ID_NONE,         0 }
 };
 
@@ -295,6 +304,7 @@ const AVCodecTag ff_codec_wav_tags[] = {
     { CODEC_ID_ADPCM_YAMAHA,    0x0020 },
     { CODEC_ID_TRUESPEECH,      0x0022 },
     { CODEC_ID_GSM_MS,          0x0031 },
+    { CODEC_ID_AMR_NB,          0x0038 },  /* rogue format number */
     { CODEC_ID_ADPCM_G726,      0x0045 },
     { CODEC_ID_MP2,             0x0050 },
     { CODEC_ID_MP3,             0x0055 },
@@ -448,8 +458,6 @@ int ff_put_wav_header(AVIOContext *pb, AVCodecContext *enc)
         riff_extradata_start= enc->extradata;
         riff_extradata= enc->extradata + enc->extradata_size;
         hdrsize += enc->extradata_size;
-    } else if (!waveformatextensible){
-        hdrsize -= 2;
     }
     if(waveformatextensible) {                                    /* write WAVEFORMATEXTENSIBLE extensions */
         hdrsize += 22;
@@ -460,8 +468,8 @@ int ff_put_wav_header(AVIOContext *pb, AVCodecContext *enc)
         avio_wl32(pb, 0x00100000);
         avio_wl32(pb, 0xAA000080);
         avio_wl32(pb, 0x719B3800);
-    } else if(riff_extradata - riff_extradata_start) {
-        avio_wl16(pb, riff_extradata - riff_extradata_start);
+    } else {
+        avio_wl16(pb, riff_extradata - riff_extradata_start); /* cbSize */
     }
     avio_write(pb, riff_extradata_start, riff_extradata - riff_extradata_start);
     if(hdrsize&1){

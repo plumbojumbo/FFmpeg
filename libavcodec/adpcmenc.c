@@ -32,13 +32,7 @@
  * Fringe ADPCM codecs (e.g., DK3, DK4, Westwood)
  *   by Mike Melanson (melanson@pcisys.net)
  *
- * Reference documents:
- * http://www.pcisys.net/~melanson/codecs/simpleaudio.html
- * http://www.geocities.com/SiliconValley/8682/aud3.txt
- * http://openquicktime.sourceforge.net/plugins.htm
- * XAnim sources (xa_codec.c) http://www.rasnaimaging.com/people/lapus/download.html
- * http://www.cs.ucla.edu/~leec/mediabench/applications.html
- * SoX source code http://home.sprynet.com/~cbagwell/sox.html
+ * See ADPCM decoder reference documents for codec information.
  */
 
 typedef struct TrellisPath {
@@ -85,6 +79,8 @@ static av_cold int adpcm_encode_init(AVCodecContext *avctx)
         FF_ALLOC_OR_GOTO(avctx, s->nodep_buf, 2 * frontier * sizeof(*s->nodep_buf), error);
         FF_ALLOC_OR_GOTO(avctx, s->trellis_hash, 65536 * sizeof(*s->trellis_hash), error);
     }
+
+    avctx->bits_per_coded_sample = av_get_bits_per_sample(avctx->codec->id);
 
     switch(avctx->codec->id) {
     case CODEC_ID_ADPCM_IMA_WAV:
@@ -670,18 +666,17 @@ static int adpcm_encode_frame(AVCodecContext *avctx,
 }
 
 
-#define ADPCM_ENCODER(id,name,long_name_)       \
-AVCodec ff_ ## name ## _encoder = {             \
-    #name,                                      \
-    AVMEDIA_TYPE_AUDIO,                         \
-    id,                                         \
-    sizeof(ADPCMEncodeContext),                 \
-    adpcm_encode_init,                          \
-    adpcm_encode_frame,                         \
-    adpcm_encode_close,                         \
-    NULL,                                       \
-    .sample_fmts = (const enum AVSampleFormat[]){AV_SAMPLE_FMT_S16,AV_SAMPLE_FMT_NONE}, \
-    .long_name = NULL_IF_CONFIG_SMALL(long_name_), \
+#define ADPCM_ENCODER(id_, name_, long_name_)               \
+AVCodec ff_ ## name_ ## _encoder = {                        \
+    .name           = #name_,                               \
+    .type           = AVMEDIA_TYPE_AUDIO,                   \
+    .id             = id_,                                  \
+    .priv_data_size = sizeof(ADPCMEncodeContext),           \
+    .init           = adpcm_encode_init,                    \
+    .encode         = adpcm_encode_frame,                   \
+    .close          = adpcm_encode_close,                   \
+    .sample_fmts    = (const enum AVSampleFormat[]){AV_SAMPLE_FMT_S16,AV_SAMPLE_FMT_NONE}, \
+    .long_name      = NULL_IF_CONFIG_SMALL(long_name_),     \
 }
 
 ADPCM_ENCODER(CODEC_ID_ADPCM_IMA_QT, adpcm_ima_qt, "ADPCM IMA QuickTime");

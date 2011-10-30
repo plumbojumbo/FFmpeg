@@ -246,14 +246,16 @@ static const DVprofile dv_profiles[] = {
     }
 };
 
-const DVprofile* ff_dv_frame_profile2(AVCodecContext* codec, const DVprofile *sys,
+const DVprofile* avpriv_dv_frame_profile2(AVCodecContext* codec, const DVprofile *sys,
                                   const uint8_t* frame, unsigned buf_size)
 {
-   int i;
+   int i, dsf, stype;
 
-   int dsf = (frame[3] & 0x80) >> 7;
+   if(buf_size < DV_PROFILE_BYTES)
+       return NULL;
 
-   int stype = frame[80*5 + 48 + 3] & 0x1f;
+   dsf = (frame[3] & 0x80) >> 7;
+   stype = frame[80*5 + 48 + 3] & 0x1f;
 
    /* 576i50 25Mbps 4:1:1 is a special case */
    if (dsf == 1 && stype == 0 && frame[4] & 0x07 /* the APT field */) {
@@ -274,13 +276,13 @@ const DVprofile* ff_dv_frame_profile2(AVCodecContext* codec, const DVprofile *sy
    return NULL;
 }
 
-const DVprofile* ff_dv_frame_profile(const DVprofile *sys,
+const DVprofile* avpriv_dv_frame_profile(const DVprofile *sys,
                                   const uint8_t* frame, unsigned buf_size)
 {
-    return ff_dv_frame_profile2(NULL, sys, frame, buf_size);
+    return avpriv_dv_frame_profile2(NULL, sys, frame, buf_size);
 }
 
-const DVprofile* ff_dv_codec_profile(AVCodecContext* codec)
+const DVprofile* avpriv_dv_codec_profile(AVCodecContext* codec)
 {
     int i;
 

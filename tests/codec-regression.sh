@@ -112,6 +112,11 @@ do_video_encoding huffyuv.avi "-an -vcodec huffyuv -pix_fmt yuv422p -sws_flags n
 do_video_decoding "" "-strict -2 -pix_fmt yuv420p -sws_flags neighbor+bitexact"
 fi
 
+if [ -n "$do_amv" ] ; then
+do_video_encoding amv.avi "-an -vcodec amv"
+do_video_decoding
+fi
+
 if [ -n "$do_rc" ] ; then
 do_video_encoding mpeg4-rc.avi "-b 400k -bf 2 -an -vcodec mpeg4"
 do_video_decoding
@@ -154,6 +159,11 @@ fi
 if [ -n "$do_mjpeg" ] ; then
 do_video_encoding mjpeg.avi "-qscale 9 -an -vcodec mjpeg -pix_fmt yuvj420p"
 do_video_decoding "" "-pix_fmt yuv420p"
+fi
+
+if [ -n "$do_jpeg2000" ] ; then
+do_video_encoding jpeg2000.avi "-qscale 7 -an -vcodec j2k -strict experimental -pix_fmt rgb24"
+do_video_decoding "-vcodec j2k -strict experimental" "-pix_fmt yuv420p"
 fi
 
 if [ -n "$do_ljpeg" ] ; then
@@ -240,6 +250,11 @@ do_video_encoding dnxhd-720p-10bit.dnxhd "-s hd720 -b 90M -pix_fmt yuv422p10 -vf
 do_video_decoding "" "-s cif -pix_fmt yuv420p"
 fi
 
+if [ -n "$do_prores" ] ; then
+do_video_encoding prores.mov "-vcodec prores"
+do_video_decoding "" "-pix_fmt yuv420p"
+fi
+
 if [ -n "$do_svq1" ] ; then
 do_video_encoding svq1.mov "-an -vcodec svq1 -qscale 3 -pix_fmt yuv410p"
 do_video_decoding "" "-pix_fmt yuv420p"
@@ -294,8 +309,13 @@ do_audio_encoding ac3.rm "-vn -acodec ac3_fixed"
 #$tiny_psnr $pcm_dst $pcm_ref 2 1024
 fi
 
+if [ -n "$do_g723_1" ] ; then
+do_audio_encoding g723_1.tco "-b:a 6.3k -ac 1 -ar 8000 -acodec g723_1"
+do_audio_decoding
+fi
+
 if [ -n "$do_g726" ] ; then
-do_audio_encoding g726.wav "-b 32k -ac 1 -ar 8000 -acodec g726"
+do_audio_encoding g726.wav "-b:a 32k -ac 1 -ar 8000 -acodec g726"
 do_audio_decoding
 fi
 
@@ -378,6 +398,5 @@ do_audio_enc_dec au  flt pcm_f32be
 do_audio_enc_dec wav flt pcm_f32le
 do_audio_enc_dec au  dbl pcm_f64be
 do_audio_enc_dec wav dbl pcm_f64le
-do_audio_enc_dec wav s16 pcm_zork
 do_audio_enc_dec 302 s16 pcm_s24daud "-ac 6 -ar 96000"
 fi

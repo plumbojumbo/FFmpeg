@@ -44,6 +44,7 @@ static const uint8_t type_sizes2[6] = {
 };
 
 typedef struct TiffEncoderContext {
+    AVClass *avclass;
     AVCodecContext *avctx;
     AVFrame picture;
 
@@ -219,6 +220,7 @@ static int encode_frame(AVCodecContext * avctx, unsigned char *buf,
     uint8_t *yuv_line = NULL;
     int shift_h, shift_v;
 
+    s->avctx = avctx;
     s->buf_start = buf;
     s->buf = &ptr;
     s->buf_size = buf_size;
@@ -245,6 +247,14 @@ static int encode_frame(AVCodecContext * avctx, unsigned char *buf,
     s->subsampling[1] = 1;
 
     switch (avctx->pix_fmt) {
+    case PIX_FMT_RGB48LE:
+        s->bpp = 48;
+        s->photometric_interpretation = 2;
+        bpp_tab[0] = 16;
+        bpp_tab[1] = 16;
+        bpp_tab[2] = 16;
+        bpp_tab[3] = 16;
+        break;
     case PIX_FMT_RGB24:
         s->bpp = 24;
         s->photometric_interpretation = 2;
@@ -283,7 +293,7 @@ static int encode_frame(AVCodecContext * avctx, unsigned char *buf,
         return -1;
     }
     if (!is_yuv)
-        s->bpp_tab_size = ((s->bpp + 7) >> 3);
+        s->bpp_tab_size = (s->bpp >= 48) ? ((s->bpp + 7) >> 4):((s->bpp + 7) >> 3);
 
     if (s->compr == TIFF_DEFLATE || s->compr == TIFF_ADOBE_DEFLATE || s->compr == TIFF_LZW)
         //best choose for DEFLATE
@@ -444,7 +454,7 @@ fail:
 }
 
 static const AVOption options[]={
-{"dpi", "set the image resolution (in dpi)", offsetof(TiffEncoderContext, dpi), FF_OPT_TYPE_INT, {.dbl = 72}, 1, 0x10000, AV_OPT_FLAG_VIDEO_PARAM|AV_OPT_FLAG_ENCODING_PARAM},
+{"dpi", "set the image resolution (in dpi)", offsetof(TiffEncoderContext, dpi), AV_OPT_TYPE_INT, {.dbl = 72}, 1, 0x10000, AV_OPT_FLAG_VIDEO_PARAM|AV_OPT_FLAG_ENCODING_PARAM},
 {NULL}
 };
 static const AVClass class = { "tiff", av_default_item_name, options, LIBAVUTIL_VERSION_INT };
@@ -460,7 +470,7 @@ AVCodec ff_tiff_encoder = {
                               PIX_FMT_MONOBLACK, PIX_FMT_MONOWHITE,
                               PIX_FMT_YUV420P, PIX_FMT_YUV422P,
                               PIX_FMT_YUV444P, PIX_FMT_YUV410P,
-                              PIX_FMT_YUV411P,
+                              PIX_FMT_YUV411P, PIX_FMT_RGB48LE,
                               PIX_FMT_NONE},
     .long_name = NULL_IF_CONFIG_SMALL("TIFF image"),
     .priv_class= &class,

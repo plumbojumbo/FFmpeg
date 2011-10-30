@@ -522,6 +522,7 @@ static int socket_open_listen(struct sockaddr_in *my_addr)
     tmp = 1;
     setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &tmp, sizeof(tmp));
 
+    my_addr->sin_family = AF_INET;
     if (bind (server_fd, (struct sockaddr *) my_addr, sizeof (*my_addr)) < 0) {
         char bindmsg[32];
         snprintf(bindmsg, sizeof(bindmsg), "bind(port %d)", ntohs(my_addr->sin_port));
@@ -3168,8 +3169,8 @@ static void rtsp_cmd_setup(HTTPContext *c, const char *url,
 
     switch(rtp_c->rtp_protocol) {
     case RTSP_LOWER_TRANSPORT_UDP:
-        rtp_port = rtp_get_local_rtp_port(rtp_c->rtp_handles[stream_index]);
-        rtcp_port = rtp_get_local_rtcp_port(rtp_c->rtp_handles[stream_index]);
+        rtp_port = ff_rtp_get_local_rtp_port(rtp_c->rtp_handles[stream_index]);
+        rtcp_port = ff_rtp_get_local_rtcp_port(rtp_c->rtp_handles[stream_index]);
         avio_printf(c->pb, "Transport: RTP/AVP/UDP;unicast;"
                     "client_port=%d-%d;server_port=%d-%d",
                     th->client_port_min, th->client_port_max,
@@ -3937,7 +3938,7 @@ static int ffserver_opt_default(const char *opt, const char *arg,
     int ret = 0;
     const AVOption *o = av_opt_find(avctx, opt, NULL, type, 0);
     if(o)
-        ret = av_set_string3(avctx, opt, arg, 1, NULL);
+        ret = av_opt_set(avctx, opt, arg, 0);
     return ret;
 }
 
@@ -4235,6 +4236,7 @@ static int parse_ffconfig(const char *filename)
                 stream->fmt = ffserver_guess_format(NULL, stream->filename, NULL);
                 avcodec_get_context_defaults2(&video_enc, AVMEDIA_TYPE_VIDEO);
                 avcodec_get_context_defaults2(&audio_enc, AVMEDIA_TYPE_AUDIO);
+
                 audio_id = CODEC_ID_NONE;
                 video_id = CODEC_ID_NONE;
                 if (stream->fmt) {
@@ -4669,6 +4671,7 @@ int main(int argc, char **argv)
 {
     struct sigaction sigact;
 
+    parse_loglevel(argc, argv, options);
     av_register_all();
 
     show_banner();

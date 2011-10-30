@@ -22,7 +22,7 @@
  */
 
 /**
- * @file libavcodec/xbin.c
+ * @file
  * Binary text decoder
  * eXtended BINary text (XBIN) decoder
  * iCEDraw File decoder
@@ -74,7 +74,7 @@ static av_cold int decode_init(AVCodecContext *avctx)
     } else {
         switch(s->font_height) {
         default:
-            av_log(avctx, AV_LOG_WARNING, "font height %i not support\n", s->font_height);
+            av_log(avctx, AV_LOG_WARNING, "font height %i not supported\n", s->font_height);
             s->font_height = 8;
         case 8:
             s->font = ff_cga_font;
@@ -131,6 +131,7 @@ static int decode_frame(AVCodecContext *avctx,
     int buf_size = avpkt->size;
     const uint8_t *buf_end = buf+buf_size;
 
+    s->x = s->y = 0;
     s->frame.buffer_hints = FF_BUFFER_HINTS_VALID |
                             FF_BUFFER_HINTS_PRESERVE |
                             FF_BUFFER_HINTS_REUSABLE;

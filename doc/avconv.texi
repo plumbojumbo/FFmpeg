@@ -82,13 +82,15 @@ described.
 @table @option
 
 @item -f @var{fmt} (@emph{input/output})
-Force format.
+Force input or output file format. The format is normally autodetected for input
+files and guessed from file extension for output files, so this option is not
+needed in most cases.
 
 @item -i @var{filename} (@emph{input})
 input file name
 
 @item -y (@emph{global})
-Overwrite output files.
+Overwrite output files without asking.
 
 @item -c[:@var{stream_specifier}] @var{codec} (@emph{input/output,per-stream})
 @itemx -codec[:@var{stream_specifier}] @var{codec} (@emph{input/output,per-stream})
@@ -111,9 +113,8 @@ will copy all the streams except the second video, which will be encoded with
 libx264, and the 138th audio, which will be encoded with libvorbis.
 
 @item -t @var{duration} (@emph{output})
-Restrict the transcoded/captured video sequence
-to the duration specified in seconds.
-@code{hh:mm:ss[.xxx]} syntax is also supported.
+Stop writing the output after its duration reaches @var{duration}.
+@var{duration} may be a number in seconds, or in @code{hh:mm:ss[.xxx]} form.
 
 @item -fs @var{limit_size} (@emph{output})
 Set the file size limit.
@@ -131,7 +132,7 @@ Set the input time offset in seconds.
 @code{[-]hh:mm:ss[.xxx]} syntax is also supported.
 The offset is added to the timestamps of the input files.
 Specifying a positive offset means that the corresponding
-streams are delayed by 'offset' seconds.
+streams are delayed by @var{offset} seconds.
 
 @item -metadata[:metadata_specifier] @var{key}=@var{value} (@emph{output,per-metadata})
 Set a metadata key/value pair.
@@ -153,13 +154,11 @@ To set the language of the second stream:
 avconv -i INPUT -metadata:s:1 language=eng OUTPUT
 @end example
 
-@item -v @var{number} (@emph{global})
-Set the logging verbosity level.
-
 @item -target @var{type} (@emph{output})
-Specify target file type ("vcd", "svcd", "dvd", "dv", "dv50", "pal-vcd",
-"ntsc-svcd", ... ). All the format options (bitrate, codecs,
-buffer sizes) are then set automatically. You can just type:
+Specify target file type (@code{vcd}, @code{svcd}, @code{dvd}, @code{dv},
+@code{dv50}). @var{type} may be prefixed with @code{pal-}, @code{ntsc-} or
+@code{film-} to use the corresponding standard. All the format options
+(bitrate, codecs, buffer sizes) are then set automatically. You can just type:
 
 @example
 avconv -i myfile.avi -target vcd /tmp/vcd.mpg
@@ -183,10 +182,15 @@ Stop writing to the stream after @var{framecount} frames.
 Use fixed quality scale (VBR). The meaning of @var{q} is
 codec-dependent.
 
-@item -filter[:@var{stream_specifier}] @var{filter_graph}
+@item -filter[:@var{stream_specifier}] @var{filter_graph} (@emph{output,per-stream})
 @var{filter_graph} is a description of the filter graph to apply to
 the stream. Use @code{-filters} to show all the available filters
 (including also sources and sinks).
+@item -pre[:@var{stream_specifier}] @var{preset_name} (@emph{output,per-stream})
+Specify the preset for matching stream(s).
+
+@item -stats (@emph{global})
+Print encoding progress/statistics. On by default.
 
 @end table
 
@@ -646,8 +650,10 @@ Show benchmarking information at the end of an encode.
 Shows CPU time used and maximum memory consumption.
 Maximum memory consumption is not supported on all systems,
 it will usually display as 0 if not supported.
+@item -timelimit @var{duration} (@emph{global})
+Exit after avconv has been running for @var{duration} seconds.
 @item -dump (@emph{global})
-Dump each input packet.
+Dump each input packet to stderr.
 @item -hex (@emph{global})
 When dumping packets, also dump the payload.
 @item -ps @var{size}
@@ -765,6 +771,21 @@ quality).
 
 @chapter Examples
 @c man begin EXAMPLES
+
+@section Preset files
+
+A preset file contains a sequence of @var{option=value} pairs, one for
+each line, specifying a sequence of options which can be specified also on
+the command line. Lines starting with the hash ('#') character are ignored and
+are used to provide comments. Empty lines are also ignored. Check the
+@file{presets} directory in the Libav source tree for examples.
+
+Preset files are specified with the @code{pre} option, this option takes a
+preset name as input.  Avconv searches for a file named @var{preset_name}.avpreset in
+the directories @file{$AVCONV_DATADIR} (if set), and @file{$HOME/.avconv}, and in
+the data directory defined at configuration time (usually @file{$PREFIX/share/avconv})
+in that order.  For example, if the argument is @code{libx264-max}, it will
+search for the file @file{libx264-max.avpreset}.
 
 @section Video and Audio grabbing
 

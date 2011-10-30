@@ -42,17 +42,19 @@
 #include <assert.h>
 
 static const AVOption options[] = {
-    { "movflags", "MOV muxer flags", offsetof(MOVMuxContext, flags), FF_OPT_TYPE_FLAGS, {.dbl = 0}, INT_MIN, INT_MAX, AV_OPT_FLAG_ENCODING_PARAM, "movflags" },
-    { "rtphint", "Add RTP hint tracks", 0, FF_OPT_TYPE_CONST, {.dbl = FF_MOV_FLAG_RTP_HINT}, INT_MIN, INT_MAX, AV_OPT_FLAG_ENCODING_PARAM, "movflags" },
+    { "movflags", "MOV muxer flags", offsetof(MOVMuxContext, flags), AV_OPT_TYPE_FLAGS, {.dbl = 0}, INT_MIN, INT_MAX, AV_OPT_FLAG_ENCODING_PARAM, "movflags" },
+    { "rtphint", "Add RTP hint tracks", 0, AV_OPT_TYPE_CONST, {.dbl = FF_MOV_FLAG_RTP_HINT}, INT_MIN, INT_MAX, AV_OPT_FLAG_ENCODING_PARAM, "movflags" },
+    { "moov_size", "maximum moov size so it can be placed at the begin", offsetof(MOVMuxContext, reserved_moov_size), AV_OPT_TYPE_INT, {.dbl = 0}, 0, INT_MAX, AV_OPT_FLAG_ENCODING_PARAM, 0 },
     FF_RTP_FLAG_OPTS(MOVMuxContext, rtp_flags),
     { NULL },
 };
 
-static const AVClass mov_muxer_class = {
-    .class_name = "MOV/3GP/MP4/3G2 muxer",
-    .item_name  = av_default_item_name,
-    .option     = options,
-    .version    = LIBAVUTIL_VERSION_INT,
+#define MOV_CLASS(flavor)\
+static const AVClass flavor ## _muxer_class = {\
+    .class_name = #flavor " muxer",\
+    .item_name  = av_default_item_name,\
+    .option     = options,\
+    .version    = LIBAVUTIL_VERSION_INT,\
 };
 
 //FIXME support 64 bit variant with wide placeholders
@@ -2012,7 +2014,7 @@ int ff_mov_write_packet(AVFormatContext *s, AVPacket *pkt)
     if (enc->codec_id == CODEC_ID_AMR_NB) {
         /* We must find out how many AMR blocks there are in one packet */
         static uint16_t packed_size[16] =
-            {13, 14, 16, 18, 20, 21, 27, 32, 6, 0, 0, 0, 0, 0, 0, 0};
+            {13, 14, 16, 18, 20, 21, 27, 32, 6, 0, 0, 0, 0, 0, 0, 1};
         int len = 0;
 
         while (len < size && samplesInChunk < 100) {
@@ -2061,7 +2063,7 @@ int ff_mov_write_packet(AVFormatContext *s, AVPacket *pkt)
     }
 
     if (!(trk->entry % MOV_INDEX_CLUSTER_SIZE)) {
-        trk->cluster = av_realloc(trk->cluster, (trk->entry + MOV_INDEX_CLUSTER_SIZE) * sizeof(*trk->cluster));
+        trk->cluster = av_realloc_f(trk->cluster, sizeof(*trk->cluster), (trk->entry + MOV_INDEX_CLUSTER_SIZE));
         if (!trk->cluster)
             return -1;
     }
@@ -2273,6 +2275,11 @@ static int mov_write_header(AVFormatContext *s)
         av_set_pts_info(st, 64, 1, track->timescale);
     }
 
+    if(mov->reserved_moov_size){
+        mov->reserved_moov_pos= avio_tell(pb);
+        avio_skip(pb, mov->reserved_moov_size);
+    }
+
     mov_write_mdat_tag(pb, mov);
 
 #if FF_API_TIMESTAMP
@@ -2327,9 +2334,21 @@ static int mov_write_trailer(AVFormatContext *s)
         ffio_wfourcc(pb, "mdat");
         avio_wb64(pb, mov->mdat_size+16);
     }
-    avio_seek(pb, moov_pos, SEEK_SET);
+    avio_seek(pb, mov->reserved_moov_size ? mov->reserved_moov_pos : moov_pos, SEEK_SET);
 
     mov_write_moov_tag(pb, mov, s);
+    if(mov->reserved_moov_size){
+        int64_t size=  mov->reserved_moov_size - (avio_tell(pb) - mov->reserved_moov_pos);
+        if(size < 8){
+            av_log(s, AV_LOG_ERROR, "reserved_moov_size is too small, needed %Ld additional\n", 8-size);
+            return -1;
+        }
+        avio_wb32(pb, size);
+        ffio_wfourcc(pb, "free");
+        for(i=0; i<size; i++)
+            avio_w8(pb, 0);
+        avio_seek(pb, moov_pos, SEEK_SET);
+    }
 
     if (mov->chapter_track)
         av_freep(&mov->tracks[mov->chapter_track].enc);
@@ -2351,6 +2370,7 @@ static int mov_write_trailer(AVFormatContext *s)
 }
 
 #if CONFIG_MOV_MUXER
+MOV_CLASS(mov)
 AVOutputFormat ff_mov_muxer = {
     .name              = "mov",
     .long_name         = NULL_IF_CONFIG_SMALL("MOV format"),
@@ -2371,6 +2391,7 @@ AVOutputFormat ff_mov_muxer = {
 };
 #endif
 #if CONFIG_TGP_MUXER
+MOV_CLASS(tgp)
 AVOutputFormat ff_tgp_muxer = {
     .name              = "3gp",
     .long_name         = NULL_IF_CONFIG_SMALL("3GP format"),
@@ -2383,10 +2404,11 @@ AVOutputFormat ff_tgp_muxer = {
     .write_trailer     = mov_write_trailer,
     .flags = AVFMT_GLOBALHEADER,
     .codec_tag = (const AVCodecTag* const []){codec_3gp_tags, 0},
-    .priv_class = &mov_muxer_class,
+    .priv_class = &tgp_muxer_class,
 };
 #endif
 #if CONFIG_MP4_MUXER
+MOV_CLASS(mp4)
 AVOutputFormat ff_mp4_muxer = {
     .name              = "mp4",
     .long_name         = NULL_IF_CONFIG_SMALL("MP4 format"),
@@ -2404,10 +2426,11 @@ AVOutputFormat ff_mp4_muxer = {
     .write_trailer     = mov_write_trailer,
     .flags = AVFMT_GLOBALHEADER,
     .codec_tag = (const AVCodecTag* const []){ff_mp4_obj_type, 0},
-    .priv_class = &mov_muxer_class,
+    .priv_class = &mp4_muxer_class,
 };
 #endif
 #if CONFIG_PSP_MUXER
+MOV_CLASS(psp)
 AVOutputFormat ff_psp_muxer = {
     .name              = "psp",
     .long_name         = NULL_IF_CONFIG_SMALL("PSP MP4 format"),
@@ -2424,10 +2447,11 @@ AVOutputFormat ff_psp_muxer = {
     .write_trailer     = mov_write_trailer,
     .flags = AVFMT_GLOBALHEADER,
     .codec_tag = (const AVCodecTag* const []){ff_mp4_obj_type, 0},
-    .priv_class = &mov_muxer_class,
+    .priv_class = &psp_muxer_class,
 };
 #endif
 #if CONFIG_TG2_MUXER
+MOV_CLASS(tg2)
 AVOutputFormat ff_tg2_muxer = {
     .name              = "3g2",
     .long_name         = NULL_IF_CONFIG_SMALL("3GP2 format"),
@@ -2440,10 +2464,11 @@ AVOutputFormat ff_tg2_muxer = {
     .write_trailer     = mov_write_trailer,
     .flags = AVFMT_GLOBALHEADER,
     .codec_tag = (const AVCodecTag* const []){codec_3gp_tags, 0},
-    .priv_class = &mov_muxer_class,
+    .priv_class = &tg2_muxer_class,
 };
 #endif
 #if CONFIG_IPOD_MUXER
+MOV_CLASS(ipod)
 AVOutputFormat ff_ipod_muxer = {
     .name              = "ipod",
     .long_name         = NULL_IF_CONFIG_SMALL("iPod H.264 MP4 format"),
@@ -2457,6 +2482,6 @@ AVOutputFormat ff_ipod_muxer = {
     .write_trailer     = mov_write_trailer,
     .flags = AVFMT_GLOBALHEADER,
     .codec_tag = (const AVCodecTag* const []){codec_ipod_tags, 0},
-    .priv_class = &mov_muxer_class,
+    .priv_class = &ipod_muxer_class,
 };
 #endif

@@ -220,7 +220,7 @@ static int read_header(AVFormatContext *s1, AVFormatParameters *ap)
 
     s1->ctx_flags |= AVFMTCTX_NOHEADER;
 
-    st = av_new_stream(s1, 0);
+    st = avformat_new_stream(s1, NULL);
     if (!st) {
         return AVERROR(ENOMEM);
     }
@@ -436,11 +436,13 @@ static int write_packet(AVFormatContext *s, AVPacket *pkt)
                 avio_wb32(pb[0], 0);
                 ffio_wfourcc(pb[0], "jp2 ");
                 avio_write(pb[0], st->codec->extradata, st->codec->extradata_size);
+            }else if(pkt->size >= 8 && AV_RB32(pkt->data) == 0xFF4FFF51){
+                //jpeg2000 codestream
             }else if(pkt->size < 8 ||
                      (!st->codec->extradata_size &&
                       AV_RL32(pkt->data+4) != MKTAG('j','P',' ',' '))){ // signature
             error:
-                av_log(s, AV_LOG_ERROR, "malformated jpeg2000 codestream\n");
+                av_log(s, AV_LOG_ERROR, "malformated jpeg2000 codestream %X\n", AV_RB32(pkt->data));
                 return -1;
             }
         }
@@ -460,22 +462,21 @@ static int write_packet(AVFormatContext *s, AVPacket *pkt)
 #define OFFSET(x) offsetof(VideoData, x)
 #define DEC AV_OPT_FLAG_DECODING_PARAM
 static const AVOption options[] = {
-    { "pixel_format", "", OFFSET(pixel_format), FF_OPT_TYPE_STRING, {.str = NULL}, 0, 0, DEC },
-    { "video_size",   "", OFFSET(video_size),   FF_OPT_TYPE_STRING, {.str = NULL}, 0, 0, DEC },
-    { "framerate",    "", OFFSET(framerate),    FF_OPT_TYPE_STRING, {.str = "25"}, 0, 0, DEC },
-    { "loop",         "", OFFSET(loop),         FF_OPT_TYPE_INT,    {.dbl = 0},    0, 1, DEC },
+    { "pixel_format", "", OFFSET(pixel_format), AV_OPT_TYPE_STRING, {.str = NULL}, 0, 0, DEC },
+    { "video_size",   "", OFFSET(video_size),   AV_OPT_TYPE_STRING, {.str = NULL}, 0, 0, DEC },
+    { "framerate",    "", OFFSET(framerate),    AV_OPT_TYPE_STRING, {.str = "25"}, 0, 0, DEC },
+    { "loop",         "", OFFSET(loop),         AV_OPT_TYPE_INT,    {.dbl = 0},    0, 1, DEC },
     { NULL },
 };
 
+/* input */
+#if CONFIG_IMAGE2_DEMUXER
 static const AVClass img2_class = {
     .class_name = "image2 demuxer",
     .item_name  = av_default_item_name,
     .option     = options,
     .version    = LIBAVUTIL_VERSION_INT,
 };
-
-/* input */
-#if CONFIG_IMAGE2_DEMUXER
 AVInputFormat ff_image2_demuxer = {
     .name           = "image2",
     .long_name      = NULL_IF_CONFIG_SMALL("image2 sequence"),
@@ -488,13 +489,19 @@ AVInputFormat ff_image2_demuxer = {
 };
 #endif
 #if CONFIG_IMAGE2PIPE_DEMUXER
+static const AVClass img2pipe_class = {
+    .class_name = "image2pipe demuxer",
+    .item_name  = av_default_item_name,
+    .option     = options,
+    .version    = LIBAVUTIL_VERSION_INT,
+};
 AVInputFormat ff_image2pipe_demuxer = {
     .name           = "image2pipe",
     .long_name      = NULL_IF_CONFIG_SMALL("piped image2 sequence"),
     .priv_data_size = sizeof(VideoData),
     .read_header    = read_header,
     .read_packet    = read_packet,
-    .priv_class     = &img2_class,
+    .priv_class     = &img2pipe_class,
 };
 #endif
 

@@ -41,6 +41,7 @@ void avfilter_register_all(void)
     REGISTER_FILTER (ASHOWINFO,   ashowinfo,   af);
 
     REGISTER_FILTER (ABUFFER,     abuffer,     asrc);
+    REGISTER_FILTER (AEVALSRC,    aevalsrc,    asrc);
     REGISTER_FILTER (AMOVIE,      amovie,      asrc);
     REGISTER_FILTER (ANULLSRC,    anullsrc,    asrc);
 
@@ -53,6 +54,7 @@ void avfilter_register_all(void)
     REGISTER_FILTER (CROP,        crop,        vf);
     REGISTER_FILTER (CROPDETECT,  cropdetect,  vf);
     REGISTER_FILTER (DELOGO,      delogo,      vf);
+    REGISTER_FILTER (DESHAKE,     deshake,     vf);
     REGISTER_FILTER (DRAWBOX,     drawbox,     vf);
     REGISTER_FILTER (DRAWTEXT,    drawtext,    vf);
     REGISTER_FILTER (FADE,        fade,        vf);

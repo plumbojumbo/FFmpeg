@@ -29,8 +29,8 @@
 #include "libavutil/rational.h"
 
 #define LIBAVFILTER_VERSION_MAJOR  2
-#define LIBAVFILTER_VERSION_MINOR 43
-#define LIBAVFILTER_VERSION_MICRO  2
+#define LIBAVFILTER_VERSION_MINOR 45
+#define LIBAVFILTER_VERSION_MICRO  1
 
 #define LIBAVFILTER_VERSION_INT AV_VERSION_INT(LIBAVFILTER_VERSION_MAJOR, \
                                                LIBAVFILTER_VERSION_MINOR, \
@@ -41,10 +41,10 @@
 #define LIBAVFILTER_BUILD       LIBAVFILTER_VERSION_INT
 
 #ifndef FF_API_OLD_VSINK_API
-#define FF_API_OLD_VSINK_API        (LIBAVUTIL_VERSION_MAJOR < 3)
+#define FF_API_OLD_VSINK_API        (LIBAVFILTER_VERSION_MAJOR < 3)
 #endif
 #ifndef FF_API_OLD_ALL_FORMATS_API
-#define FF_API_OLD_ALL_FORMATS_API (LIBAVUTIL_VERSION_MAJOR < 3)
+#define FF_API_OLD_ALL_FORMATS_API (LIBAVFILTER_VERSION_MAJOR < 3)
 #endif
 
 #include <stddef.h>
@@ -100,6 +100,9 @@ typedef struct AVFilterBuffer {
 #define AV_PERM_REUSE    0x08   ///< can output the buffer multiple times, with the same contents each time
 #define AV_PERM_REUSE2   0x10   ///< can output the buffer multiple times, modified each time
 #define AV_PERM_NEG_LINESIZES 0x20  ///< the buffer requested can have negative linesizes
+#define AV_PERM_ALIGN    0x40   ///< the buffer must be aligned
+
+#define AVFILTER_ALIGN 16 //not part of ABI
 
 /**
  * Audio specific properties in a reference to an AVFilterBuffer. Since

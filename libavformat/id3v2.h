@@ -59,17 +59,10 @@ typedef struct ID3v2ExtraMetaGEOB {
     uint8_t *data;
 } ID3v2ExtraMetaGEOB;
 
-typedef struct ID3v2EMFunc {
-    const char *tag3;
-    const char *tag4;
-    void (*read)(AVFormatContext*, AVIOContext*, int, char*, ID3v2ExtraMeta **);
-    void (*free)();
-} ID3v2EMFunc;
-
 /**
  * Detect ID3v2 Header.
  * @param buf   must be ID3v2_HEADER_SIZE byte long
- * @param magic magic bytes to identify the header, machine byte order.
+ * @param magic magic bytes to identify the header.
  * If in doubt, use ID3v2_DEFAULT_MAGIC.
  */
 int ff_id3v2_match(const uint8_t *buf, const char *magic);
@@ -94,16 +87,21 @@ void ff_id3v2_read(AVFormatContext *s, const char *magic);
 void ff_id3v2_read_all(AVFormatContext *s, const char *magic, ID3v2ExtraMeta **extra_meta);
 
 /**
+ * Write an ID3v2 tag.
+ * @param id3v2_version Subversion of ID3v2; supported values are 3 and 4
+ * @param magic magic bytes to identify the header
+ * If in doubt, use ID3v2_DEFAULT_MAGIC.
+ */
+int ff_id3v2_write(struct AVFormatContext *s, int id3v2_version, const char *magic);
+
+/**
  * Free memory allocated parsing special (non-text) metadata.
  * @param extra_meta Pointer to a pointer to the head of a ID3v2ExtraMeta list, *extra_meta is set to NULL.
  */
 void ff_id3v2_free_extra_meta(ID3v2ExtraMeta **extra_meta);
 
-extern const ID3v2EMFunc ff_id3v2_extra_meta_funcs[];
-
 extern const AVMetadataConv ff_id3v2_34_metadata_conv[];
 extern const AVMetadataConv ff_id3v2_4_metadata_conv[];
-extern const AVMetadataConv ff_id3v2_2_metadata_conv[];
 
 /**
  * A list of text information frames allowed in both ID3 v2.3 and v2.4

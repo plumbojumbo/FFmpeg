@@ -33,7 +33,7 @@ int ff_raw_read_header(AVFormatContext *s, AVFormatParameters *ap)
     AVStream *st;
     enum CodecID id;
 
-    st = av_new_stream(s, 0);
+    st = avformat_new_stream(s, NULL);
     if (!st)
         return AVERROR(ENOMEM);
 
@@ -56,6 +56,12 @@ int ff_raw_read_header(AVFormatContext *s, AVFormatParameters *ap)
 
             if (s1 && s1->sample_rate)
                 st->codec->sample_rate = s1->sample_rate;
+            if (st->codec->sample_rate <= 0) {
+                av_log(s, AV_LOG_ERROR, "Invalid sample rate %d specified\n",
+                       st->codec->sample_rate);
+                return AVERROR(EINVAL);
+            }
+
             if (s1 && s1->channels)
                 st->codec->channels    = s1->channels;
 
@@ -122,7 +128,7 @@ int ff_raw_read_partial_packet(AVFormatContext *s, AVPacket *pkt)
 int ff_raw_audio_read_header(AVFormatContext *s,
                              AVFormatParameters *ap)
 {
-    AVStream *st = av_new_stream(s, 0);
+    AVStream *st = avformat_new_stream(s, NULL);
     if (!st)
         return AVERROR(ENOMEM);
     st->codec->codec_type = AVMEDIA_TYPE_AUDIO;
@@ -144,7 +150,7 @@ int ff_raw_video_read_header(AVFormatContext *s,
     int ret = 0;
 
 
-    st = av_new_stream(s, 0);
+    st = avformat_new_stream(s, NULL);
     if (!st) {
         ret = AVERROR(ENOMEM);
         goto fail;
@@ -171,7 +177,7 @@ fail:
 #define OFFSET(x) offsetof(FFRawVideoDemuxerContext, x)
 #define DEC AV_OPT_FLAG_DECODING_PARAM
 const AVOption ff_rawvideo_options[] = {
-    { "framerate", "", OFFSET(framerate), FF_OPT_TYPE_STRING, {.str = "25"}, 0, 0, DEC},
+    { "framerate", "", OFFSET(framerate), AV_OPT_TYPE_STRING, {.str = "25"}, 0, 0, DEC},
     { NULL },
 };
 
@@ -196,6 +202,18 @@ AVInputFormat ff_gsm_demuxer = {
     .flags= AVFMT_GENERIC_INDEX,
     .extensions = "gsm",
     .value = CODEC_ID_GSM,
+};
+#endif
+
+#if CONFIG_LATM_DEMUXER
+AVInputFormat ff_latm_demuxer = {
+    .name           = "latm",
+    .long_name      = NULL_IF_CONFIG_SMALL("raw LOAS/LATM"),
+    .read_header    = ff_raw_audio_read_header,
+    .read_packet    = ff_raw_read_partial_packet,
+    .flags= AVFMT_GENERIC_INDEX,
+    .extensions = "latm",
+    .value = CODEC_ID_AAC_LATM,
 };
 #endif
 
@@ -233,7 +251,7 @@ AVInputFormat ff_shorten_demuxer = {
     .long_name      = NULL_IF_CONFIG_SMALL("raw Shorten"),
     .read_header    = ff_raw_audio_read_header,
     .read_packet    = ff_raw_read_partial_packet,
-    .flags= AVFMT_GENERIC_INDEX,
+    .flags          = AVFMT_NOBINSEARCH | AVFMT_NOGENSEARCH | AVFMT_NO_BYTE_SEEK,
     .extensions = "shn",
     .value = CODEC_ID_SHORTEN,
 };
