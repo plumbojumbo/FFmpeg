@@ -31,6 +31,7 @@
 #include "libavutil/parseutils.h"
 #include "libavutil/fifo.h"
 #include "libavutil/intreadwrite.h"
+#include "libavutil/avstring.h"
 #include <unistd.h>
 #include "internal.h"
 #include "network.h"
@@ -195,8 +196,8 @@ static int udp_set_url(struct sockaddr_storage *addr,
     return addr_len;
 }
 
-static int udp_socket_create(UDPContext *s,
-                             struct sockaddr_storage *addr, int *addr_len)
+static int udp_socket_create(UDPContext *s, struct sockaddr_storage *addr,
+                             int *addr_len, const char *localaddr)
 {
     int udp_fd = -1;
     struct addrinfo *res0 = NULL, *res = NULL;
@@ -204,7 +205,8 @@ static int udp_socket_create(UDPContext *s,
 
     if (((struct sockaddr *) &s->dest_addr)->sa_family)
         family = ((struct sockaddr *) &s->dest_addr)->sa_family;
-    res0 = udp_resolve_host(0, s->local_port, SOCK_DGRAM, family, AI_PASSIVE);
+    res0 = udp_resolve_host(localaddr[0] ? localaddr : NULL, s->local_port,
+                            SOCK_DGRAM, family, AI_PASSIVE);
     if (res0 == 0)
         goto fail;
     for (res = res0; res; res=res->ai_next) {
@@ -327,7 +329,7 @@ static void *circular_buffer_task( void *_URLContext)
         int ret;
         int len;
 
-        if (url_interrupt_cb()) {
+        if (ff_check_interrupt(&h->interrupt_callback)) {
             s->circular_buffer_error = EINTR;
             return NULL;
         }
@@ -377,7 +379,7 @@ static void *circular_buffer_task( void *_URLContext)
 /* return non zero if error */
 static int udp_open(URLContext *h, const char *uri, int flags)
 {
-    char hostname[1024];
+    char hostname[1024], localaddr[1024] = "";
     int port, udp_fd = -1, tmp, bind_ret = -1;
     UDPContext *s = NULL;
     int is_output;
@@ -430,6 +432,9 @@ static int udp_open(URLContext *h, const char *uri, int flags)
         if (av_find_info_tag(buf, sizeof(buf), "fifo_size", p)) {
             s->circular_buffer_size = strtol(buf, NULL, 10)*188;
         }
+        if (av_find_info_tag(buf, sizeof(buf), "localaddr", p)) {
+            av_strlcpy(localaddr, buf, sizeof(localaddr));
+        }
     }
 
     /* fill the dest addr */
@@ -447,7 +452,7 @@ static int udp_open(URLContext *h, const char *uri, int flags)
 
     if ((s->is_multicast || !s->local_port) && (h->flags & AVIO_FLAG_READ))
         s->local_port = port;
-    udp_fd = udp_socket_create(s, &my_addr, &len);
+    udp_fd = udp_socket_create(s, &my_addr, &len, localaddr);
     if (udp_fd < 0)
         goto fail;
 
@@ -555,6 +560,7 @@ static int udp_read(URLContext *h, uint8_t *buf, int size)
                 }
 
                 av_fifo_generic_read(s->fifo, buf, avail, NULL);
+                av_fifo_drain(s->fifo, AV_RL32(tmp) - avail);
                 return avail;
             }
             else {

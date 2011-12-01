@@ -332,7 +332,6 @@ static void qtrle_decode_32bpp(QtrleContext *s, int stream_ptr, int row_ptr, int
     int rle_code;
     int pixel_ptr;
     int row_inc = s->frame.linesize[0];
-    unsigned char a, r, g, b;
     unsigned int argb;
     unsigned char *rgb = s->frame.data[0];
     int pixel_limit = s->frame.linesize[0] * s->avctx->height;
@@ -352,16 +351,13 @@ static void qtrle_decode_32bpp(QtrleContext *s, int stream_ptr, int row_ptr, int
                 /* decode the run length code */
                 rle_code = -rle_code;
                 CHECK_STREAM_PTR(4);
-                a = s->buf[stream_ptr++];
-                r = s->buf[stream_ptr++];
-                g = s->buf[stream_ptr++];
-                b = s->buf[stream_ptr++];
-                argb = (a << 24) | (r << 16) | (g << 8) | (b << 0);
+                argb = AV_RB32(s->buf + stream_ptr);
+                stream_ptr += 4;
 
                 CHECK_PIXEL_PTR(rle_code * 4);
 
                 while (rle_code--) {
-                    *(unsigned int *)(&rgb[pixel_ptr]) = argb;
+                    AV_WN32A(rgb + pixel_ptr, argb);
                     pixel_ptr += 4;
                 }
             } else {
@@ -370,13 +366,10 @@ static void qtrle_decode_32bpp(QtrleContext *s, int stream_ptr, int row_ptr, int
 
                 /* copy pixels directly to output */
                 while (rle_code--) {
-                    a = s->buf[stream_ptr++];
-                    r = s->buf[stream_ptr++];
-                    g = s->buf[stream_ptr++];
-                    b = s->buf[stream_ptr++];
-                    argb = (a << 24) | (r << 16) | (g << 8) | (b << 0);
-                    *(unsigned int *)(&rgb[pixel_ptr]) = argb;
-                    pixel_ptr += 4;
+                    argb = AV_RB32(s->buf + stream_ptr);
+                    AV_WN32A(rgb + pixel_ptr, argb);
+                    stream_ptr += 4;
+                    pixel_ptr  += 4;
                 }
             }
         }
@@ -442,7 +435,7 @@ static int qtrle_decode_frame(AVCodecContext *avctx,
     s->buf = buf;
     s->size = buf_size;
 
-    s->frame.reference = 1;
+    s->frame.reference = 3;
     s->frame.buffer_hints = FF_BUFFER_HINTS_VALID | FF_BUFFER_HINTS_PRESERVE |
                             FF_BUFFER_HINTS_REUSABLE | FF_BUFFER_HINTS_READABLE;
     if (avctx->reget_buffer(avctx, &s->frame)) {

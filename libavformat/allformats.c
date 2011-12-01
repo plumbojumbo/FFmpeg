@@ -54,6 +54,7 @@ void av_register_all(void)
     REGISTER_DEMUXER  (ACT, act);
     REGISTER_DEMUXER  (ADF, adf);
     REGISTER_MUXER    (ADTS, adts);
+    REGISTER_DEMUXER  (ADX, adx);
     REGISTER_DEMUXER  (AEA, aea);
     REGISTER_MUXDEMUX (AIFF, aiff);
     REGISTER_MUXDEMUX (AMR, amr);
@@ -74,6 +75,7 @@ void av_register_all(void)
     REGISTER_DEMUXER  (BINTEXT, bintext);
     REGISTER_DEMUXER  (BINK, bink);
     REGISTER_MUXDEMUX (BIT, bit);
+    REGISTER_DEMUXER  (BMV, bmv);
     REGISTER_DEMUXER  (C93, c93);
     REGISTER_MUXDEMUX (CAF, caf);
     REGISTER_MUXDEMUX (CAVSVIDEO, cavsvideo);
@@ -218,7 +220,7 @@ void av_register_all(void)
     REGISTER_MUXER    (TGP, tgp);
     REGISTER_DEMUXER  (THP, thp);
     REGISTER_DEMUXER  (TIERTEXSEQ, tiertexseq);
-    REGISTER_MUXER    (TIMECODE_V2, timecode_v2);
+    REGISTER_MUXER    (MKVTIMESTAMP_V2, mkvtimestamp_v2);
     REGISTER_DEMUXER  (TMV, tmv);
     REGISTER_MUXDEMUX (TRUEHD, truehd);
     REGISTER_DEMUXER  (TTA, tta);
@@ -258,6 +260,8 @@ void av_register_all(void)
     REGISTER_PROTOCOL (FILE, file);
     REGISTER_PROTOCOL (GOPHER, gopher);
     REGISTER_PROTOCOL (HTTP, http);
+    REGISTER_PROTOCOL (HTTPPROXY, httpproxy);
+    REGISTER_PROTOCOL (HTTPS, https);
     REGISTER_PROTOCOL (MMSH, mmsh);
     REGISTER_PROTOCOL (MMST, mmst);
     REGISTER_PROTOCOL (MD5,  md5);
@@ -271,5 +275,6 @@ void av_register_all(void)
 #endif
     REGISTER_PROTOCOL (RTP, rtp);
     REGISTER_PROTOCOL (TCP, tcp);
+    REGISTER_PROTOCOL (TLS, tls);
     REGISTER_PROTOCOL (UDP, udp);
 }

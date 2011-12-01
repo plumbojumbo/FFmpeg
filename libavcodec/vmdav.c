@@ -264,7 +264,8 @@ static void vmd_decode(VmdVideoContext *s)
             r = *p++ * 4;
             g = *p++ * 4;
             b = *p++ * 4;
-            palette32[i] = (r << 16) | (g << 8) | (b);
+            palette32[i] = 0xFF << 24 | r << 16 | g << 8 | b;
+            palette32[i] |= palette32[i] >> 6 & 0x30303;
         }
     }
     if (p < p_end) {
@@ -421,7 +422,7 @@ static int vmdvideo_decode_frame(AVCodecContext *avctx,
     if (buf_size < 16)
         return buf_size;
 
-    s->frame.reference = 1;
+    s->frame.reference = 3;
     if (avctx->get_buffer(avctx, &s->frame)) {
         av_log(s->avctx, AV_LOG_ERROR, "VMD Video: get_buffer() failed\n");
         return -1;

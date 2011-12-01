@@ -30,7 +30,7 @@
 #include "libavutil/mathematics.h"
 #include "avfilter.h"
 
-static const char *var_names[] = {
+static const char * const var_names[] = {
     "INTERLACED",  ///< tell if the current frame is interlaced
     "N",           ///< frame number (starting at zero)
     "POS",         ///< original position in the file of the frame
@@ -137,13 +137,13 @@ AVFilter avfilter_vf_setpts = {
 
     .priv_size = sizeof(SetPTSContext),
 
-    .inputs    = (AVFilterPad[]) {{ .name             = "default",
+    .inputs    = (const AVFilterPad[]) {{ .name       = "default",
                                     .type             = AVMEDIA_TYPE_VIDEO,
                                     .get_video_buffer = avfilter_null_get_video_buffer,
                                     .config_props     = config_input,
                                     .start_frame      = start_frame, },
                                   { .name = NULL }},
-    .outputs   = (AVFilterPad[]) {{ .name             = "default",
+    .outputs   = (const AVFilterPad[]) {{ .name       = "default",
                                     .type             = AVMEDIA_TYPE_VIDEO, },
                                   { .name = NULL}},
 };

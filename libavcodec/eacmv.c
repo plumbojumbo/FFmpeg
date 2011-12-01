@@ -141,7 +141,7 @@ static void cmv_process_header(CmvContext *s, const uint8_t *buf, const uint8_t 
 
     buf += 16;
     for (i=pal_start; i<pal_start+pal_count && i<AVPALETTE_COUNT && buf_end - buf >= 3; i++) {
-        s->palette[i] = AV_RB24(buf);
+        s->palette[i] = 0xFF << 24 | AV_RB24(buf);
         buf += 3;
     }
 }
@@ -175,8 +175,10 @@ static int cmv_decode_frame(AVCodecContext *avctx,
     FFSWAP(AVFrame, s->last_frame, s->last2_frame);
     FFSWAP(AVFrame, s->frame, s->last_frame);
 
-    s->frame.reference = 1;
-    s->frame.buffer_hints = FF_BUFFER_HINTS_VALID;
+    s->frame.reference = 3;
+    s->frame.buffer_hints = FF_BUFFER_HINTS_VALID |
+                            FF_BUFFER_HINTS_READABLE |
+                            FF_BUFFER_HINTS_PRESERVE;
     if (avctx->get_buffer(avctx, &s->frame)<0) {
         av_log(avctx, AV_LOG_ERROR, "get_buffer() failed\n");
         return -1;

@@ -63,7 +63,7 @@ avs_decode_frame(AVCodecContext * avctx,
         av_log(avctx, AV_LOG_ERROR, "reget_buffer() failed\n");
         return -1;
     }
-    p->reference = 1;
+    p->reference = 3;
     p->pict_type = AV_PICTURE_TYPE_P;
     p->key_frame = 0;
 
@@ -85,8 +85,10 @@ avs_decode_frame(AVCodecContext * avctx,
         if (first >= 256 || last > 256 || buf_end - buf < 4 + 4 + 3 * (last - first))
             return AVERROR_INVALIDDATA;
         buf += 4;
-        for (i=first; i<last; i++, buf+=3)
+        for (i=first; i<last; i++, buf+=3) {
             pal[i] = (buf[0] << 18) | (buf[1] << 10) | (buf[2] << 2);
+            pal[i] |= 0xFF << 24 | (pal[i] >> 6) & 0x30303;
+        }
 
         sub_type = buf[0];
         type = buf[1];

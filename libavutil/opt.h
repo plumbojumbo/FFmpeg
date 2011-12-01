@@ -34,6 +34,7 @@
 
 /**
  * @defgroup avoptions AVOptions
+ * @ingroup lavu_data
  * @{
  * AVOptions provide a generic system to declare options on arbitrary structs
  * ("objects"). An option can have a help text, a type and a range of possible
@@ -175,7 +176,7 @@
  *
  * @section avoptions_use Using AVOptions
  * This section deals with accessing options in an AVOptions-enabled struct.
- * Such structs in Libav are e.g. AVCodecContext in libavcodec or
+ * Such structs in FFmpeg are e.g. AVCodecContext in libavcodec or
  * AVFormatContext in libavformat.
  *
  * @subsection avoptions_use_examine Examining AVOptions
@@ -212,7 +213,6 @@
  * filled with option as a parameter. This allows to set some options
  * that cannot be set otherwise, since e.g. the input file format is not known
  * before the file is actually opened.
- * @}
  */
 
 enum AVOptionType{
@@ -340,9 +340,9 @@ attribute_deprecated const AVOption *av_set_double(void *obj, const char *name, 
 attribute_deprecated const AVOption *av_set_q(void *obj, const char *name, AVRational n);
 attribute_deprecated const AVOption *av_set_int(void *obj, const char *name, int64_t n);
 
-attribute_deprecated double av_get_double(void *obj, const char *name, const AVOption **o_out);
-attribute_deprecated AVRational av_get_q(void *obj, const char *name, const AVOption **o_out);
-attribute_deprecated int64_t av_get_int(void *obj, const char *name, const AVOption **o_out);
+double av_get_double(void *obj, const char *name, const AVOption **o_out);
+AVRational av_get_q(void *obj, const char *name, const AVOption **o_out);
+int64_t av_get_int(void *obj, const char *name, const AVOption **o_out);
 attribute_deprecated const char *av_get_string(void *obj, const char *name, const AVOption **o_out, char *buf, int buf_len);
 attribute_deprecated const AVOption *av_next_option(void *obj, const AVOption *last);
 #endif
@@ -585,6 +585,7 @@ int av_opt_get_int   (void *obj, const char *name, int search_flags, int64_t    
 int av_opt_get_double(void *obj, const char *name, int search_flags, double     *out_val);
 int av_opt_get_q     (void *obj, const char *name, int search_flags, AVRational *out_val);
 /**
+ * @}
  * @}
  */
 

@@ -31,6 +31,7 @@
 #include "libavcodec/ac3dec.h"
 #include "dsputil_mmx.h"
 #include "idct_xvid.h"
+#include "diracdsp_mmx.h"
 
 //#undef NDEBUG
 //#include <assert.h>
@@ -1864,6 +1865,84 @@ void ff_avg_vc1_mspel_mc00_mmx2(uint8_t *dst, const uint8_t *src, int stride, in
     avg_pixels8_mmx2(dst, src, stride, 8);
 }
 
+/* only used in VP3/5/6 */
+static void put_vp_no_rnd_pixels8_l2_mmx(uint8_t *dst, const uint8_t *a, const uint8_t *b, int stride, int h)
+{
+//    START_TIMER
+    MOVQ_BFE(mm6);
+    __asm__ volatile(
+        "1:                             \n\t"
+        "movq   (%1), %%mm0             \n\t"
+        "movq   (%2), %%mm1             \n\t"
+        "movq   (%1,%4), %%mm2          \n\t"
+        "movq   (%2,%4), %%mm3          \n\t"
+        PAVGBP_MMX_NO_RND(%%mm0, %%mm1, %%mm4,   %%mm2, %%mm3, %%mm5)
+        "movq   %%mm4, (%3)             \n\t"
+        "movq   %%mm5, (%3,%4)          \n\t"
+
+        "movq   (%1,%4,2), %%mm0        \n\t"
+        "movq   (%2,%4,2), %%mm1        \n\t"
+        "movq   (%1,%5), %%mm2          \n\t"
+        "movq   (%2,%5), %%mm3          \n\t"
+        "lea    (%1,%4,4), %1           \n\t"
+        "lea    (%2,%4,4), %2           \n\t"
+        PAVGBP_MMX_NO_RND(%%mm0, %%mm1, %%mm4,   %%mm2, %%mm3, %%mm5)
+        "movq   %%mm4, (%3,%4,2)        \n\t"
+        "movq   %%mm5, (%3,%5)          \n\t"
+        "lea    (%3,%4,4), %3           \n\t"
+        "subl   $4, %0                  \n\t"
+        "jnz    1b                      \n\t"
+        :"+r"(h), "+r"(a), "+r"(b), "+r"(dst)
+        :"r"((x86_reg)stride), "r"((x86_reg)3L*stride)
+        :"memory");
+//    STOP_TIMER("put_vp_no_rnd_pixels8_l2_mmx")
+}
+static void put_vp_no_rnd_pixels16_l2_mmx(uint8_t *dst, const uint8_t *a, const uint8_t *b, int stride, int h)
+{
+    put_vp_no_rnd_pixels8_l2_mmx(dst, a, b, stride, h);
+    put_vp_no_rnd_pixels8_l2_mmx(dst+8, a+8, b+8, stride, h);
+}
+
+#if CONFIG_DIRAC_DECODER
+#define DIRAC_PIXOP(OPNAME, EXT)\
+void ff_ ## OPNAME ## _dirac_pixels8_ ## EXT(uint8_t *dst, const uint8_t *src[5], int stride, int h)\
+{\
+    OPNAME ## _pixels8_ ## EXT(dst, src[0], stride, h);\
+}\
+void ff_ ## OPNAME ## _dirac_pixels16_ ## EXT(uint8_t *dst, const uint8_t *src[5], int stride, int h)\
+{\
+    OPNAME ## _pixels16_ ## EXT(dst, src[0], stride, h);\
+}\
+void ff_ ## OPNAME ## _dirac_pixels32_ ## EXT(uint8_t *dst, const uint8_t *src[5], int stride, int h)\
+{\
+    OPNAME ## _pixels16_ ## EXT(dst   , src[0]   , stride, h);\
+    OPNAME ## _pixels16_ ## EXT(dst+16, src[0]+16, stride, h);\
+}
+
+DIRAC_PIXOP(put, mmx)
+DIRAC_PIXOP(avg, mmx)
+DIRAC_PIXOP(avg, mmx2)
+
+void ff_put_dirac_pixels16_sse2(uint8_t *dst, const uint8_t *src[5], int stride, int h)
+{
+    put_pixels16_sse2(dst, src[0], stride, h);
+}
+void ff_avg_dirac_pixels16_sse2(uint8_t *dst, const uint8_t *src[5], int stride, int h)
+{
+    avg_pixels16_sse2(dst, src[0], stride, h);
+}
+void ff_put_dirac_pixels32_sse2(uint8_t *dst, const uint8_t *src[5], int stride, int h)
+{
+    put_pixels16_sse2(dst   , src[0]   , stride, h);
+    put_pixels16_sse2(dst+16, src[0]+16, stride, h);
+}
+void ff_avg_dirac_pixels32_sse2(uint8_t *dst, const uint8_t *src[5], int stride, int h)
+{
+    avg_pixels16_sse2(dst   , src[0]   , stride, h);
+    avg_pixels16_sse2(dst+16, src[0]+16, stride, h);
+}
+#endif
+
 /* XXX: those functions should be suppressed ASAP when all IDCTs are
    converted */
 #if CONFIG_GPL
@@ -2323,10 +2402,15 @@ void ff_vector_clip_int32_mmx     (int32_t *dst, const int32_t *src, int32_t min
                                    int32_t max, unsigned int len);
 void ff_vector_clip_int32_sse2    (int32_t *dst, const int32_t *src, int32_t min,
                                    int32_t max, unsigned int len);
-void ff_vector_clip_int32_sse2_int(int32_t *dst, const int32_t *src, int32_t min,
+void ff_vector_clip_int32_int_sse2(int32_t *dst, const int32_t *src, int32_t min,
                                    int32_t max, unsigned int len);
-void ff_vector_clip_int32_sse41   (int32_t *dst, const int32_t *src, int32_t min,
+void ff_vector_clip_int32_sse4    (int32_t *dst, const int32_t *src, int32_t min,
                                    int32_t max, unsigned int len);
+
+extern void ff_butterflies_float_interleave_sse(float *dst, const float *src0,
+                                                const float *src1, int len);
+extern void ff_butterflies_float_interleave_avx(float *dst, const float *src0,
+                                                const float *src1, int len);
 
 void dsputil_init_mmx(DSPContext* c, AVCodecContext *avctx)
 {
@@ -2454,6 +2538,9 @@ void dsputil_init_mmx(DSPContext* c, AVCodecContext *avctx)
 
         if (!high_bit_depth)
             c->draw_edges = draw_edges_mmx;
+
+        c->put_no_rnd_pixels_l2[0]= put_vp_no_rnd_pixels16_l2_mmx;
+        c->put_no_rnd_pixels_l2[1]= put_vp_no_rnd_pixels8_l2_mmx;
 
         if (CONFIG_H263_DECODER || CONFIG_H263_ENCODER) {
             c->h263_v_loop_filter= h263_v_loop_filter_mmx;
@@ -2767,6 +2854,11 @@ void dsputil_init_mmx(DSPContext* c, AVCodecContext *avctx)
             c->vector_clipf = vector_clipf_sse;
 #if HAVE_YASM
             c->scalarproduct_float = ff_scalarproduct_float_sse;
+            c->butterflies_float_interleave = ff_butterflies_float_interleave_sse;
+
+            if (!high_bit_depth)
+                c->emulated_edge_mc = emulated_edge_mc_sse;
+            c->gmc = gmc_sse;
 #endif
         }
         if (HAVE_AMD3DNOW && (mm_flags & AV_CPU_FLAG_3DNOW))
@@ -2776,7 +2868,7 @@ void dsputil_init_mmx(DSPContext* c, AVCodecContext *avctx)
             c->scalarproduct_int16 = ff_scalarproduct_int16_sse2;
             c->scalarproduct_and_madd_int16 = ff_scalarproduct_and_madd_int16_sse2;
             if (mm_flags & AV_CPU_FLAG_ATOM) {
-                c->vector_clip_int32 = ff_vector_clip_int32_sse2_int;
+                c->vector_clip_int32 = ff_vector_clip_int32_int_sse2;
             } else {
                 c->vector_clip_int32 = ff_vector_clip_int32_sse2;
             }
@@ -2787,10 +2879,6 @@ void dsputil_init_mmx(DSPContext* c, AVCodecContext *avctx)
                     c->apply_window_int16 = ff_apply_window_int16_sse2;
                 }
             }
-
-            if (!high_bit_depth)
-            c->emulated_edge_mc = emulated_edge_mc_sse;
-            c->gmc= gmc_sse;
 #endif
         }
         if (mm_flags & AV_CPU_FLAG_SSSE3) {
@@ -2808,7 +2896,7 @@ void dsputil_init_mmx(DSPContext* c, AVCodecContext *avctx)
 
         if (mm_flags & AV_CPU_FLAG_SSE4 && HAVE_SSE) {
 #if HAVE_YASM
-            c->vector_clip_int32 = ff_vector_clip_int32_sse41;
+            c->vector_clip_int32 = ff_vector_clip_int32_sse4;
 #endif
         }
 
@@ -2824,6 +2912,7 @@ void dsputil_init_mmx(DSPContext* c, AVCodecContext *avctx)
                 c->put_h264_chroma_pixels_tab[0]= ff_put_h264_chroma_mc8_10_avx;
                 c->avg_h264_chroma_pixels_tab[0]= ff_avg_h264_chroma_mc8_10_avx;
             }
+            c->butterflies_float_interleave = ff_butterflies_float_interleave_avx;
         }
 #endif
     }

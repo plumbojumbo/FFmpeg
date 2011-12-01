@@ -25,7 +25,41 @@
 #define AVCODEC_INTERNAL_H
 
 #include <stdint.h>
+
+#include "libavutil/pixfmt.h"
 #include "avcodec.h"
+
+typedef struct InternalBuffer {
+    int last_pic_num;
+    uint8_t *base[4];
+    uint8_t *data[4];
+    int linesize[4];
+    int width;
+    int height;
+    enum PixelFormat pix_fmt;
+} InternalBuffer;
+
+typedef struct AVCodecInternal {
+    /**
+     * internal buffer count
+     * used by default get/release/reget_buffer().
+     */
+    int buffer_count;
+
+    /**
+     * internal buffers
+     * used by default get/release/reget_buffer().
+     */
+    InternalBuffer *buffer;
+
+    /**
+     * Whether the parent AVCodecContext is a copy of the context which had
+     * init() called on it.
+     * This is used by multithreading - shared tables and picture pointers
+     * should be freed from the original context only.
+     */
+    int is_copy;
+} AVCodecInternal;
 
 struct AVCodecDefault {
     const uint8_t *key;
@@ -59,5 +93,8 @@ unsigned int avpriv_toupper4(unsigned int x);
  * does needed setup of pkt_pts/pos and such for (re)get_buffer();
  */
 void ff_init_buffer_info(AVCodecContext *s, AVFrame *pic);
+
+int avpriv_lock_avformat(void);
+int avpriv_unlock_avformat(void);
 
 #endif /* AVCODEC_INTERNAL_H */

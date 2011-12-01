@@ -20,6 +20,7 @@
  */
 
 #include "avformat.h"
+#include "internal.h"
 #include "riff.h"
 #include "isom.h"
 #include "matroska.h"
@@ -33,9 +34,9 @@
 #include "libavutil/random_seed.h"
 #include "libavutil/lfg.h"
 #include "libavutil/dict.h"
+#include "libavutil/avstring.h"
 #include "libavcodec/xiph.h"
 #include "libavcodec/mpeg4audio.h"
-#include <strings.h>
 
 typedef struct ebml_master {
     int64_t         pos;                ///< absolute offset in the file where the master's elements start
@@ -317,9 +318,12 @@ static int64_t mkv_write_seekhead(AVIOContext *pb, mkv_seekhead *seekhead)
 
     currentpos = avio_tell(pb);
 
-    if (seekhead->reserved_size > 0)
-        if (avio_seek(pb, seekhead->filepos, SEEK_SET) < 0)
-            return -1;
+    if (seekhead->reserved_size > 0) {
+        if (avio_seek(pb, seekhead->filepos, SEEK_SET) < 0) {
+            currentpos = -1;
+            goto fail;
+        }
+    }
 
     metaseek = start_ebml_master(pb, MATROSKA_ID_SEEKHEAD, seekhead->reserved_size);
     for (i = 0; i < seekhead->num_entries; i++) {
@@ -343,6 +347,7 @@ static int64_t mkv_write_seekhead(AVIOContext *pb, mkv_seekhead *seekhead)
 
         currentpos = seekhead->filepos;
     }
+fail:
     av_free(seekhead->entries);
     av_free(seekhead);
 
@@ -574,7 +579,10 @@ static int mkv_write_tracks(AVFormatContext *s)
         switch (codec->codec_type) {
             case AVMEDIA_TYPE_VIDEO:
                 put_ebml_uint(pb, MATROSKA_ID_TRACKTYPE, MATROSKA_TRACK_TYPE_VIDEO);
-                put_ebml_uint(pb, MATROSKA_ID_TRACKDEFAULTDURATION, av_q2d(codec->time_base)*1E9);
+                if(st->avg_frame_rate.num && st->avg_frame_rate.den && 1.0/av_q2d(st->avg_frame_rate) > av_q2d(codec->time_base))
+                    put_ebml_uint(pb, MATROSKA_ID_TRACKDEFAULTDURATION, 1E9/av_q2d(st->avg_frame_rate));
+                else
+                    put_ebml_uint(pb, MATROSKA_ID_TRACKDEFAULTDURATION, av_q2d(codec->time_base)*1E9);
 
                 if (!native_id &&
                       ff_codec_get_tag(codec_movvideo_tags, codec->codec_id) &&
@@ -665,7 +673,7 @@ static int mkv_write_tracks(AVFormatContext *s)
         end_ebml_master(pb, track);
 
         // ms precision is the de-facto standard timescale for mkv files
-        av_set_pts_info(st, 64, 1, 1000);
+        avpriv_set_pts_info(st, 64, 1, 1000);
     }
     end_ebml_master(pb, tracks);
     return 0;
@@ -767,7 +775,7 @@ static int mkv_write_tag(AVFormatContext *s, AVDictionary *m, unsigned int eleme
     end_ebml_master(s->pb, targets);
 
     while ((t = av_dict_get(m, "", t, AV_DICT_IGNORE_SUFFIX)))
-        if (strcasecmp(t->key, "title") && strcasecmp(t->key, "stereo_mode"))
+        if (av_strcasecmp(t->key, "title") && av_strcasecmp(t->key, "stereo_mode"))
             mkv_write_simpletag(s->pb, t);
 
     end_ebml_master(s->pb, tag);

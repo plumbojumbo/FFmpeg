@@ -99,7 +99,7 @@ REMATRIX_FUNC_SIG(stereo_remix_planar)
     REGISTER_FUNC_PACKING(INCHLAYOUT, OUTCHLAYOUT, FUNC##_packed, AVFILTER_PACKED)  \
     REGISTER_FUNC_PACKING(INCHLAYOUT, OUTCHLAYOUT, FUNC##_planar, AVFILTER_PLANAR)
 
-static struct RematrixFunctionInfo {
+static const struct RematrixFunctionInfo {
     int64_t in_chlayout, out_chlayout;
     int planar, sfmt;
     void (*func)();
@@ -270,7 +270,7 @@ static int init_buffers(AVFilterLink *inlink, int nb_samples)
         int nb_channels = av_get_channel_layout_nb_channels(outlink->channel_layout);
 
         if (av_samples_alloc(data, linesize, nb_channels, nb_samples,
-                             inlink->format, inlink->planar, 16) < 0)
+                             inlink->format, 16) < 0)
             goto fail_no_mem;
         aconvert->mix_samplesref =
             avfilter_get_audio_buffer_ref_from_arrays(data, linesize, AV_PERM_WRITE,
@@ -406,12 +406,12 @@ AVFilter avfilter_af_aconvert = {
     .uninit        = uninit,
     .query_formats = query_formats,
 
-    .inputs    = (AVFilterPad[]) {{ .name            = "default",
+    .inputs    = (const AVFilterPad[]) {{ .name      = "default",
                                     .type            = AVMEDIA_TYPE_AUDIO,
                                     .filter_samples  = filter_samples,
                                     .min_perms       = AV_PERM_READ, },
                                   { .name = NULL}},
-    .outputs   = (AVFilterPad[]) {{ .name            = "default",
+    .outputs   = (const AVFilterPad[]) {{ .name      = "default",
                                     .type            = AVMEDIA_TYPE_AUDIO,
                                     .config_props    = config_output, },
                                   { .name = NULL}},

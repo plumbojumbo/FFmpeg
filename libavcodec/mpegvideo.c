@@ -118,6 +118,7 @@ const enum PixelFormat ff_pixfmt_list_420[] = {
 const enum PixelFormat ff_hwaccel_pixfmt_list_420[] = {
     PIX_FMT_DXVA2_VLD,
     PIX_FMT_VAAPI_VLD,
+    PIX_FMT_VDA_VLD,
     PIX_FMT_YUV420P,
     PIX_FMT_NONE
 };
@@ -510,6 +511,7 @@ int ff_mpeg_update_thread_context(AVCodecContext *dst, const AVCodecContext *src
     //Error/bug resilience
     s->next_p_frame_damaged = s1->next_p_frame_damaged;
     s->workaround_bugs      = s1->workaround_bugs;
+    s->padding_bug_score    = s1->padding_bug_score;
 
     //MPEG4 timing info
     memcpy(&s->time_increment_bits, &s1->time_increment_bits, (char*)&s1->shape - (char*)&s1->time_increment_bits);
@@ -857,7 +859,7 @@ void MPV_common_end(MpegEncContext *s)
     av_freep(&s->reordered_input_picture);
     av_freep(&s->dct_offset);
 
-    if(s->picture && !s->avctx->is_copy){
+    if(s->picture && !s->avctx->internal->is_copy){
         for(i=0; i<s->picture_count; i++){
             free_picture(s, &s->picture[i]);
         }
@@ -1132,7 +1134,7 @@ int MPV_frame_start(MpegEncContext *s, AVCodecContext *avctx)
             if(ff_alloc_picture(s, s->last_picture_ptr, 0) < 0)
                 return -1;
 
-            if(s->codec_id == CODEC_ID_FLV1){
+            if(s->codec_id == CODEC_ID_FLV1 || s->codec_id == CODEC_ID_H263){
                 for(i=0; i<s->height; i++)
                     memset(s->last_picture_ptr->f.data[0] + s->last_picture_ptr->f.linesize[0]*i, 16, s->width);
             }

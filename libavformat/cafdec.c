@@ -26,6 +26,7 @@
  */
 
 #include "avformat.h"
+#include "internal.h"
 #include "riff.h"
 #include "isom.h"
 #include "libavutil/intreadwrite.h"
@@ -120,18 +121,28 @@ static int read_kuki_chunk(AVFormatContext *s, int64_t size)
     } else if (st->codec->codec_id == CODEC_ID_ALAC) {
 #define ALAC_PREAMBLE 12
 #define ALAC_HEADER   36
-        if (size < ALAC_PREAMBLE + ALAC_HEADER) {
-            av_log(s, AV_LOG_ERROR, "invalid ALAC magic cookie\n");
-            avio_skip(pb, size);
-            return AVERROR_INVALIDDATA;
+#define ALAC_NEW_KUKI 24
+        if (size == ALAC_NEW_KUKI) {
+            st->codec->extradata = av_mallocz(ALAC_HEADER + FF_INPUT_BUFFER_PADDING_SIZE);
+            if (!st->codec->extradata)
+                return AVERROR(ENOMEM);
+            memcpy(st->codec->extradata, "\0\0\0\24alac", 8);
+            avio_read(pb, st->codec->extradata + ALAC_HEADER - ALAC_NEW_KUKI, ALAC_NEW_KUKI);
+            st->codec->extradata_size = ALAC_HEADER;
+        } else {
+            if (size < ALAC_PREAMBLE + ALAC_HEADER) {
+                av_log(s, AV_LOG_ERROR, "invalid ALAC magic cookie\n");
+                avio_skip(pb, size);
+                return AVERROR_INVALIDDATA;
+            }
+            avio_skip(pb, ALAC_PREAMBLE);
+            st->codec->extradata = av_mallocz(ALAC_HEADER + FF_INPUT_BUFFER_PADDING_SIZE);
+            if (!st->codec->extradata)
+                return AVERROR(ENOMEM);
+            avio_read(pb, st->codec->extradata, ALAC_HEADER);
+            st->codec->extradata_size = ALAC_HEADER;
+            avio_skip(pb, size - ALAC_PREAMBLE - ALAC_HEADER);
         }
-        avio_skip(pb, ALAC_PREAMBLE);
-        st->codec->extradata = av_mallocz(ALAC_HEADER + FF_INPUT_BUFFER_PADDING_SIZE);
-        if (!st->codec->extradata)
-            return AVERROR(ENOMEM);
-        avio_read(pb, st->codec->extradata, ALAC_HEADER);
-        st->codec->extradata_size = ALAC_HEADER;
-        avio_skip(pb, size - ALAC_PREAMBLE - ALAC_HEADER);
     } else {
         st->codec->extradata = av_mallocz(size + FF_INPUT_BUFFER_PADDING_SIZE);
         if (!st->codec->extradata)
@@ -293,7 +304,7 @@ static int read_header(AVFormatContext *s,
         return AVERROR_INVALIDDATA;
     }
 
-    av_set_pts_info(st, 64, 1, st->codec->sample_rate);
+    avpriv_set_pts_info(st, 64, 1, st->codec->sample_rate);
     st->start_time = 0;
 
     /* position the stream at the start of data */

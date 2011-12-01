@@ -1,6 +1,7 @@
 /*
- * AVI common data
- * Copyright (c) 2010 Anton Khirnov
+ * VDA HW acceleration
+ *
+ * copyright (c) 2011 Sebastien Zwickert
  *
  * This file is part of FFmpeg.
  *
@@ -19,27 +20,23 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include "avi.h"
+#ifndef AVCODEC_VDA_INTERNAL_H
+#define AVCODEC_VDA_INTERNAL_H
 
-const AVMetadataConv ff_avi_metadata_conv[] = {
-    { "IART", "artist"    },
-    { "ICMT", "comment"   },
-    { "ICOP", "copyright" },
-    { "ICRD", "date"      },
-    { "IGNR", "genre"     },
-    { "ILNG", "language"  },
-    { "INAM", "title"     },
-    { "IPRD", "album"     },
-    { "IPRT", "track"     },
-    { "ISFT", "encoder"   },
-    { "ITCH", "encoded_by"},
-    { "strn", "title"     },
-    { 0 },
-};
+#include "vda.h"
 
-const char ff_avi_tags[][5] = {
-    "IARL", "IART", "ICMS", "ICMT", "ICOP", "ICRD", "ICRP", "IDIM", "IDPI",
-    "IENG", "IGNR", "IKEY", "ILGT", "ILNG", "IMED", "INAM", "IPLT", "IPRD",
-    "IPRT", "ISBJ", "ISFT", "ISHP", "ISRC", "ISRF", "ITCH",
-    {0}
-};
+/**
+ * \addtogroup VDA_Decoding
+ *
+ * @{
+ */
+
+/** Send a frame data to the hardware decoder. */
+int ff_vda_decoder_decode(struct vda_context *vda_ctx,
+                          uint8_t *bitstream,
+                          int bitstream_size,
+                          int64_t frame_pts);
+
+/* @} */
+
+#endif /* AVCODEC_VDA_INTERNAL_H */

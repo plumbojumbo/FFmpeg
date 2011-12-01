@@ -20,13 +20,13 @@
  */
 
 #include "libavutil/mathematics.h"
+#include "libavutil/avstring.h"
 #include "libavcodec/get_bits.h"
 #include "avformat.h"
 #include "mpegts.h"
 #include "url.h"
 
 #include <unistd.h>
-#include <strings.h>
 #include "network.h"
 
 #include "rtpdec.h"
@@ -83,6 +83,11 @@ void av_register_rtp_dynamic_payload_handlers(void)
     ff_register_dynamic_payload_handler(&ff_qt_rtp_vid_handler);
     ff_register_dynamic_payload_handler(&ff_quicktime_rtp_aud_handler);
     ff_register_dynamic_payload_handler(&ff_quicktime_rtp_vid_handler);
+
+    ff_register_dynamic_payload_handler(&ff_g726_16_dynamic_handler);
+    ff_register_dynamic_payload_handler(&ff_g726_24_dynamic_handler);
+    ff_register_dynamic_payload_handler(&ff_g726_32_dynamic_handler);
+    ff_register_dynamic_payload_handler(&ff_g726_40_dynamic_handler);
 }
 
 RTPDynamicProtocolHandler *ff_rtp_handler_find_by_name(const char *name,
@@ -91,7 +96,7 @@ RTPDynamicProtocolHandler *ff_rtp_handler_find_by_name(const char *name,
     RTPDynamicProtocolHandler *handler;
     for (handler = RTPFirstDynamicPayloadHandler;
          handler; handler = handler->next)
-        if (!strcasecmp(name, handler->enc_name) &&
+        if (!av_strcasecmp(name, handler->enc_name) &&
             codec_type == handler->codec_type)
             return handler;
     return NULL;
@@ -421,7 +426,10 @@ static void finalize_packet(RTPDemuxContext *s, AVPacket *pkt, uint32_t timestam
 {
     if (pkt->pts != AV_NOPTS_VALUE || pkt->dts != AV_NOPTS_VALUE)
         return; /* Timestamp already set by depacketizer */
-    if (s->last_rtcp_ntp_time != AV_NOPTS_VALUE && timestamp != RTP_NOTS_VALUE) {
+    if (timestamp == RTP_NOTS_VALUE)
+        return;
+
+    if (s->last_rtcp_ntp_time != AV_NOPTS_VALUE && s->ic->nb_streams > 1) {
         int64_t addend;
         int delta_timestamp;
 
@@ -433,11 +441,16 @@ static void finalize_packet(RTPDemuxContext *s, AVPacket *pkt, uint32_t timestam
                    delta_timestamp;
         return;
     }
-    if (timestamp == RTP_NOTS_VALUE)
-        return;
+
     if (!s->base_timestamp)
         s->base_timestamp = timestamp;
-    pkt->pts = s->range_start_offset + timestamp - s->base_timestamp;
+    /* assume that the difference is INT32_MIN < x < INT32_MAX, but allow the first timestamp to exceed INT32_MAX */
+    if (!s->timestamp)
+        s->unwrapped_timestamp += timestamp;
+    else
+        s->unwrapped_timestamp += (int32_t)(timestamp - s->timestamp);
+    s->timestamp = timestamp;
+    pkt->pts = s->unwrapped_timestamp + s->range_start_offset - s->base_timestamp;
 }
 
 static int rtp_parse_packet_internal(RTPDemuxContext *s, AVPacket *pkt,

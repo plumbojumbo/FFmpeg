@@ -290,7 +290,7 @@ static AVPacket flush_pkt;
 
 static SDL_Surface *screen;
 
-void exit_program(int ret)
+void av_noreturn exit_program(int ret)
 {
     exit(ret);
 }
@@ -914,6 +914,7 @@ static void do_exit(VideoState *is)
 #if CONFIG_AVFILTER
     avfilter_uninit();
 #endif
+    avformat_network_deinit();
     if (show_status)
         printf("\n");
     SDL_Quit();
@@ -1561,7 +1562,10 @@ static int input_get_buffer(AVCodecContext *codec, AVFrame *pic)
     edge = codec->flags & CODEC_FLAG_EMU_EDGE ? 0 : avcodec_get_edge_width();
     w += edge << 1;
     h += edge << 1;
-
+    if (codec->pix_fmt != ctx->outputs[0]->format) {
+        av_log(codec, AV_LOG_ERROR, "Pixel format mismatches %d %d\n", codec->pix_fmt, ctx->outputs[0]->format);
+        return -1;
+    }
     if(!(ref = avfilter_get_video_buffer(ctx->outputs[0], perms, w, h)))
         return -1;
 
@@ -2075,9 +2079,10 @@ static int audio_decode_frame(VideoState *is, double *pts_ptr)
             if (dec->sample_fmt != is->audio_src_fmt || dec_channel_layout != is->audio_src_channel_layout || dec->sample_rate != is->audio_src_freq) {
                 if (is->swr_ctx)
                     swr_free(&is->swr_ctx);
-                is->swr_ctx = swr_alloc2(NULL, is->audio_tgt_channel_layout, is->audio_tgt_fmt, is->audio_tgt_freq,
-                                               dec_channel_layout,          dec->sample_fmt,   dec->sample_rate,
-                                               0, NULL);
+                is->swr_ctx = swr_alloc_set_opts(NULL,
+                                                 is->audio_tgt_channel_layout, is->audio_tgt_fmt, is->audio_tgt_freq,
+                                                 dec_channel_layout,           dec->sample_fmt,   dec->sample_rate,
+                                                 0, NULL);
                 if (!is->swr_ctx || swr_init(is->swr_ctx) < 0) {
                     fprintf(stderr, "Cannot create sample rate converter for conversion of %d Hz %s %d channels to %d Hz %s %d channels!\n",
                         dec->sample_rate,
@@ -2147,6 +2152,9 @@ static int audio_decode_frame(VideoState *is, double *pts_ptr)
 
         pkt_temp->data = pkt->data;
         pkt_temp->size = pkt->size;
+        pkt_temp->flags           = pkt->flags;
+        pkt_temp->side_data       = pkt->side_data;
+        pkt_temp->side_data_elems = pkt->side_data_elems;
 
         /* if update the audio clock with the pts */
         if (pkt->pts != AV_NOPTS_VALUE) {
@@ -2212,9 +2220,9 @@ static int stream_component_open(VideoState *is, int stream_index)
         return -1;
     avctx = ic->streams[stream_index]->codec;
 
-    opts = filter_codec_opts(codec_opts, avctx->codec_id, ic, ic->streams[stream_index]);
-
     codec = avcodec_find_decoder(avctx->codec_id);
+    opts = filter_codec_opts(codec_opts, codec, ic, ic->streams[stream_index]);
+
     switch(avctx->codec_type){
         case AVMEDIA_TYPE_AUDIO   : if(audio_codec_name   ) codec= avcodec_find_decoder_by_name(   audio_codec_name); break;
         case AVMEDIA_TYPE_SUBTITLE: if(subtitle_codec_name) codec= avcodec_find_decoder_by_name(subtitle_codec_name); break;
@@ -2225,7 +2233,12 @@ static int stream_component_open(VideoState *is, int stream_index)
 
     avctx->workaround_bugs = workaround_bugs;
     avctx->lowres = lowres;
-    if(lowres) avctx->flags |= CODEC_FLAG_EMU_EDGE;
+    if(avctx->lowres > codec->max_lowres){
+        av_log(avctx, AV_LOG_WARNING, "The maximum value for lowres supported by the decoder is %d\n",
+                codec->max_lowres);
+        avctx->lowres= codec->max_lowres;
+    }
+    if(avctx->lowres) avctx->flags |= CODEC_FLAG_EMU_EDGE;
     avctx->idct_algo= idct;
     if(fast) avctx->flags2 |= CODEC_FLAG2_FAST;
     avctx->skip_frame= skip_frame;
@@ -2347,6 +2360,8 @@ static void stream_component_close(VideoState *is, int stream_index)
         if (is->rdft) {
             av_rdft_end(is->rdft);
             av_freep(&is->rdft_data);
+            is->rdft = NULL;
+            is->rdft_bits = 0;
         }
         break;
     case AVMEDIA_TYPE_VIDEO:
@@ -2405,7 +2420,7 @@ static void stream_component_close(VideoState *is, int stream_index)
    variable instead of a thread local variable */
 static VideoState *global_video_state;
 
-static int decode_interrupt_cb(void)
+static int decode_interrupt_cb(void *ctx)
 {
     return (global_video_state && global_video_state->abort_request);
 }
@@ -2430,8 +2445,9 @@ static int read_thread(void *arg)
     is->subtitle_stream = -1;
 
     global_video_state = is;
-    avio_set_interrupt_cb(decode_interrupt_cb);
 
+    ic = avformat_alloc_context();
+    ic->interrupt_callback.callback = decode_interrupt_cb;
     err = avformat_open_input(&ic, is->filename, is->iformat, &format_opts);
     if (err < 0) {
         print_error(is->filename, err);
@@ -2543,8 +2559,10 @@ static int read_thread(void *arg)
             else
                 av_read_play(ic);
         }
-#if CONFIG_RTSP_DEMUXER
-        if (is->paused && !strcmp(ic->iformat->name, "rtsp")) {
+#if CONFIG_RTSP_DEMUXER || CONFIG_MMSH_PROTOCOL
+        if (is->paused &&
+                (!strcmp(ic->iformat->name, "rtsp") ||
+                 (ic->pb && !strncmp(input_filename, "mmsh:", 5)))) {
             /* wait 10 ms to avoid trying to get another packet */
             /* XXX: horrible */
             SDL_Delay(10);
@@ -3141,6 +3159,7 @@ int main(int argc, char **argv)
     avfilter_register_all();
 #endif
     av_register_all();
+    avformat_network_init();
 
     init_opts();
 

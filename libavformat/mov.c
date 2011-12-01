@@ -31,6 +31,7 @@
 #include "libavutil/avstring.h"
 #include "libavutil/dict.h"
 #include "avformat.h"
+#include "internal.h"
 #include "avio_internal.h"
 #include "riff.h"
 #include "isom.h"
@@ -44,21 +45,6 @@
 /*
  * First version by Francois Revol revol@free.fr
  * Seek function by Gael Chardon gael.dev@4now.net
- *
- * Features and limitations:
- * - reads most of the QT files I have (at least the structure),
- *   Sample QuickTime files with mp3 audio can be found at: http://www.3ivx.com/showcase.html
- * - the code is quite ugly... maybe I won't do it recursive next time :-)
- *
- * Funny I didn't know about http://sourceforge.net/projects/qt-ffmpeg/
- * when coding this :) (it's a writer anyway)
- *
- * Reference documents:
- * http://www.geocities.com/xhelmboyx/quicktime/formats/qtm-layout.txt
- * Apple:
- *  http://developer.apple.com/documentation/QuickTime/QTFF/
- *  http://developer.apple.com/documentation/QuickTime/QTFF/qtff.pdf
- * QuickTime is a trademark of Apple (AFAIK :))
  */
 
 #include "qtpalette.h"
@@ -67,13 +53,7 @@
 #undef NDEBUG
 #include <assert.h>
 
-/* XXX: it's the first time I make a recursive parser I think... sorry if it's ugly :P */
-
 /* those functions parse an atom */
-/* return code:
-  0: continue to parse next atom
- <0: error occurred, exit
-*/
 /* links atom IDs to parse functions */
 typedef struct MOVParseTableEntry {
     uint32_t type;
@@ -87,10 +67,11 @@ static int mov_metadata_track_or_disc_number(MOVContext *c, AVIOContext *pb,
 {
     char buf[16];
 
-    short current, total;
+    short current, total = 0;
     avio_rb16(pb); // unknown
     current = avio_rb16(pb);
-    total = avio_rb16(pb);
+    if (len >= 6)
+        total = avio_rb16(pb);
     if (!total)
         snprintf(buf, sizeof(buf), "%d", current);
     else
@@ -110,7 +91,7 @@ static int mov_metadata_int8_bypass_padding(MOVContext *c, AVIOContext *pb,
     avio_r8(pb);
     avio_r8(pb);
 
-    snprintf(buf, sizeof(buf), "%hu", avio_r8(pb));
+    snprintf(buf, sizeof(buf), "%d", avio_r8(pb));
     av_dict_set(&c->fc->metadata, key, buf, 0);
 
     return 0;
@@ -121,7 +102,7 @@ static int mov_metadata_int8_no_padding(MOVContext *c, AVIOContext *pb,
 {
     char buf[16];
 
-    snprintf(buf, sizeof(buf), "%hu", avio_r8(pb));
+    snprintf(buf, sizeof(buf), "%d", avio_r8(pb));
     av_dict_set(&c->fc->metadata, key, buf, 0);
 
     return 0;
@@ -1305,7 +1286,7 @@ int ff_mov_read_stsd_entries(MOVContext *c, AVIOContext *pb, int entries)
                     st->codec->flags2 |= CODEC_FLAG2_DROP_FRAME_TIMECODE;
                 avio_rb32(pb);
                 avio_rb32(pb);
-                st->codec->time_base.den = get_byte(pb);
+                st->codec->time_base.den = avio_r8(pb);
                 st->codec->time_base.num = 1;
             }
             /* other codec type, just skip (rtp, mp4s, ...) */
@@ -1346,14 +1327,16 @@ int ff_mov_read_stsd_entries(MOVContext *c, AVIOContext *pb, int entries)
         st->codec->channels= 1; /* really needed */
         break;
     case CODEC_ID_AMR_NB:
-    case CODEC_ID_AMR_WB:
-        st->codec->frame_size= sc->samples_per_frame;
         st->codec->channels= 1; /* really needed */
         /* force sample rate for amr, stsd in 3gp does not store sample rate */
-        if (st->codec->codec_id == CODEC_ID_AMR_NB)
-            st->codec->sample_rate = 8000;
-        else if (st->codec->codec_id == CODEC_ID_AMR_WB)
-            st->codec->sample_rate = 16000;
+        st->codec->sample_rate = 8000;
+        /* force frame_size, too, samples_per_frame isn't always set properly */
+        st->codec->frame_size  = 160;
+        break;
+    case CODEC_ID_AMR_WB:
+        st->codec->channels    = 1;
+        st->codec->sample_rate = 16000;
+        st->codec->frame_size  = 320;
         break;
     case CODEC_ID_MP2:
     case CODEC_ID_MP3:
@@ -1374,6 +1357,9 @@ int ff_mov_read_stsd_entries(MOVContext *c, AVIOContext *pb, int entries)
         }
         break;
     case CODEC_ID_AC3:
+        st->need_parsing = AVSTREAM_PARSE_FULL;
+        break;
+    case CODEC_ID_MPEG1VIDEO:
         st->need_parsing = AVSTREAM_PARSE_FULL;
         break;
     default:
@@ -1832,7 +1818,8 @@ static void mov_build_index(MOVContext *mov, AVStream *st)
     }
 }
 
-static int mov_open_dref(AVIOContext **pb, const char *src, MOVDref *ref)
+static int mov_open_dref(AVIOContext **pb, const char *src, MOVDref *ref,
+                         AVIOInterruptCB *int_cb)
 {
     /* try relative path, we do not try the absolute because it can leak information about our
        system to an attacker */
@@ -1867,7 +1854,7 @@ static int mov_open_dref(AVIOContext **pb, const char *src, MOVDref *ref)
 
             av_strlcat(filename, ref->path + l + 1, 1024);
 
-            if (!avio_open(pb, filename, AVIO_FLAG_READ))
+            if (!avio_open2(pb, filename, AVIO_FLAG_READ, int_cb, NULL))
                 return 0;
         }
     }
@@ -1909,7 +1896,7 @@ static int mov_read_trak(MOVContext *c, AVIOContext *pb, MOVAtom atom)
             sc->time_scale = 1;
     }
 
-    av_set_pts_info(st, 64, 1, sc->time_scale);
+    avpriv_set_pts_info(st, 64, 1, sc->time_scale);
 
     if (st->codec->codec_type == AVMEDIA_TYPE_AUDIO &&
         !st->codec->frame_size && sc->stts_count == 1) {
@@ -1922,7 +1909,7 @@ static int mov_read_trak(MOVContext *c, AVIOContext *pb, MOVAtom atom)
 
     if (sc->dref_id-1 < sc->drefs_count && sc->drefs[sc->dref_id-1].path) {
         MOVDref *dref = &sc->drefs[sc->dref_id - 1];
-        if (mov_open_dref(&sc->pb, c->fc->filename, dref) < 0)
+        if (mov_open_dref(&sc->pb, c->fc->filename, dref, &c->fc->interrupt_callback) < 0)
             av_log(c->fc, AV_LOG_ERROR,
                    "stream %d, error opening alias: path='%s', dir='%s', "
                    "filename='%s', volume='%s', nlvl_from=%d, nlvl_to=%d\n",

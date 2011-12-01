@@ -37,7 +37,7 @@ which should be specified first.
 @item
 To set the video bitrate of the output file to 64kbit/s:
 @example
-ffmpeg -i input.avi -b 64k output.avi
+ffmpeg -i input.avi -b:v 64k output.avi
 @end example
 
 @item
@@ -61,10 +61,12 @@ The format option may be needed for raw input files.
 @chapter Stream selection
 @c man begin STREAM SELECTION
 
-By default ffmpeg tries to pick the "best" stream of each type present in input
-files and add them to each output file. For video, this means the highest
-resolution, for audio the highest channel count. For subtitle it's simply the
-first subtitle stream.
+By default ffmpeg includes only one stream of each type (video, audio, subtitle)
+present in the input files and adds them to each output file.  It picks the
+"best" of each based upon the following criteria; for video it is the stream
+with the highest resolution, for audio the stream with the most channels, for
+subtitle it's the first subtitle stream. In the case where several streams of
+the same type rate equally, the lowest numbered stream is chosen.
 
 You can disable some of those defaults by using @code{-vn/-an/-sn} options. For
 full manual control, use the @code{-map} option, which disables the defaults just
@@ -82,7 +84,7 @@ described.
 @table @option
 
 @item -f @var{fmt} (@emph{input/output})
-Force input or output file format. The format is normally autodetected for input
+Force input or output file format. The format is normally auto detected for input
 files and guessed from file extension for output files, so this option is not
 needed in most cases.
 
@@ -92,12 +94,15 @@ input file name
 @item -y (@emph{global})
 Overwrite output files without asking.
 
+@item -n (@emph{global})
+Do not overwrite output files but exit if file exists.
+
 @item -c[:@var{stream_specifier}] @var{codec} (@emph{input/output,per-stream})
 @itemx -codec[:@var{stream_specifier}] @var{codec} (@emph{input/output,per-stream})
 Select an encoder (when used before an output file) or a decoder (when used
 before an input file) for one or more streams. @var{codec} is the name of a
 decoder/encoder or a special value @code{copy} (output only) to indicate that
-the stream is not to be reencoded.
+the stream is not to be re-encoded.
 
 For example
 @example
@@ -315,7 +320,7 @@ Requires -bufsize to be set.
 Set min video bitrate (in bit/s).
 Most useful in setting up a CBR encode:
 @example
-ffmpeg -i myfile.avi -b 4000k -minrate 4000k -maxrate 4000k -bufsize 1835k out.m2v
+ffmpeg -i myfile.avi -b:v 4000k -minrate 4000k -maxrate 4000k -bufsize 1835k out.m2v
 @end example
 It is of little use elsewise.
 @item -bufsize @var{size}
@@ -444,7 +449,7 @@ and the following constants are available:
 @end table
 
 @item -rc_override[:@var{stream_specifier}] @var{override} (@emph{output,per-stream})
-Rate control override for specific intervals, formated as "int,int,int"
+Rate control override for specific intervals, formatted as "int,int,int"
 list separated with slashes. Two first values are the beginning and
 end frame numbers, last one is quantizer to use if positive, or quality
 factor if negative.
@@ -721,6 +726,50 @@ ffmpeg -i INPUT -map 0 -map -0:a:1 OUTPUT
 
 Note that using this option disables the default mappings for this output file.
 
+@item -map_channel [@var{input_file_id}.@var{stream_specifier}.@var{channel_id}|-1][:@var{output_file_id}.@var{stream_specifier}]
+Map an audio channel from a given input to an output. If
+@var{output_file_id}.@var{stream_specifier} are not set, the audio channel will
+be mapped on all the audio streams.
+
+Using "-1" instead of
+@var{input_file_id}.@var{stream_specifier}.@var{channel_id} will map a muted
+channel.
+
+For example, assuming @var{INPUT} is a stereo audio file, you can switch the
+two audio channels with the following command:
+@example
+ffmpeg -i INPUT -map_channel 0.0.1 -map_channel 0.0.0 OUTPUT
+@end example
+
+If you want to mute the first channel and keep the second:
+@example
+ffmpeg -i INPUT -map_channel -1 -map_channel 0.0.1 OUTPUT
+@end example
+
+The order of the "-map_channel" option specifies the order of the channels in
+the output stream. The output channel layout is guessed from the number of
+channels mapped (mono if one "-map_channel", stereo if two, etc.). Using "-ac"
+in combination of "-map_channel" makes the channel gain levels to be updated if
+channel layouts don't match (for instance two "-map_channel" options and "-ac
+6").
+
+You can also extract each channel of an @var{INPUT} to specific outputs; the
+following command extract each channel of the audio stream (file 0, stream 0)
+to the respective @var{OUTPUT_CH0} and @var{OUTPUT_CH1}:
+@example
+ffmpeg -i INPUT -map_channel 0.0.0 OUTPUT_CH0 -map_channel 0.0.1 OUTPUT_CH1
+@end example
+
+The following example split the channels of a stereo input into streams:
+
+@example
+ffmpeg -i stereo.wav -map 0:0 -map 0:0 -map_channel 0.0.0:0.0 -map_channel 0.0.1:0.1 -y out.ogg
+@end example
+
+Note that "-map_channel" is currently limited to the scope of one input for
+each output; you can't for example use it to pick multiple input audio files
+and mix them into one single output.
+
 @item -map_metadata[:@var{metadata_type}][:@var{index}] @var{infile}[:@var{metadata_type}][:@var{index}] (@emph{output,per-metadata})
 Set metadata information of the next output file from @var{infile}. Note that
 those are file indices (zero-based), not filenames.
@@ -913,7 +962,7 @@ the Linux player does not seem to be very fast, so it can miss
 frames. An example is:
 
 @example
-ffmpeg -g 3 -r 3 -t 10 -b 50k -s qcif -f rv10 /tmp/b.rm
+ffmpeg -g 3 -r 3 -t 10 -b:v 50k -s qcif -f rv10 /tmp/b.rm
 @end example
 
 @item
@@ -1050,7 +1099,7 @@ You can encode to several formats at the same time and define a
 mapping from input stream to output streams:
 
 @example
-ffmpeg -i /tmp/a.wav -map 0:a -b 64k /tmp/a.mp2 -map 0:a -b 128k /tmp/b.mp2
+ffmpeg -i /tmp/a.wav -map 0:a -b:a 64k /tmp/a.mp2 -map 0:a -b:a 128k /tmp/b.mp2
 @end example
 
 Converts a.wav to a.mp2 at 64 kbits and to b.mp2 at 128 kbits. '-map

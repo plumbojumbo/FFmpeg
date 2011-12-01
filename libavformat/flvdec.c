@@ -31,6 +31,7 @@
 #include "libavcodec/bytestream.h"
 #include "libavcodec/mpeg4audio.h"
 #include "avformat.h"
+#include "internal.h"
 #include "avio_internal.h"
 #include "flv.h"
 
@@ -152,6 +153,11 @@ static int parse_keyframes_index(AVFormatContext *s, AVIOContext *ioc, AVStream 
         return 0;
     }
 
+    if(vstream->nb_index_entries>0){
+        av_log(s, AV_LOG_WARNING, "Skiping duplicate index\n");
+        return 0;
+    }
+
     while (avio_tell(ioc) < max_pos - 2 && amf_get_string(ioc, str_val, sizeof(str_val)) > 0) {
         int64_t** current_array;
         unsigned int arraylen;
@@ -191,7 +197,7 @@ static int parse_keyframes_index(AVFormatContext *s, AVIOContext *ioc, AVStream 
         }
     }
 
-    if (timeslen == fileposlen) {
+    if (timeslen == fileposlen && fileposlen && max_pos <= filepositions[0]) {
          for(i = 0; i < timeslen; i++)
              av_add_index_entry(vstream, filepositions[i], times[i]*1000, 0, 0, AVINDEX_KEYFRAME);
     } else
@@ -337,7 +343,7 @@ static int flv_read_metabody(AVFormatContext *s, int64_t next_pos) {
         stream = s->streams[i];
         if(stream->codec->codec_type == AVMEDIA_TYPE_VIDEO) vstream = stream;
         else if(stream->codec->codec_type == AVMEDIA_TYPE_AUDIO) astream = stream;
-        else if(stream->codec->codec_type == AVMEDIA_TYPE_VIDEO) dstream = stream;
+        else if(stream->codec->codec_type == AVMEDIA_TYPE_DATA) dstream = stream;
     }
 
     //parse the second object (we want a mixed array)
@@ -360,7 +366,7 @@ static AVStream *create_stream(AVFormatContext *s, int stream_type){
             st->codec->codec_id = CODEC_ID_NONE; // Going to rely on copy for now
             av_log(s, AV_LOG_DEBUG, "Data stream created\n");
     }
-    av_set_pts_info(st, 32, 1, 1000); /* 32 bit pts in ms */
+    avpriv_set_pts_info(st, 32, 1, 1000); /* 32 bit pts in ms */
     return st;
 }
 
@@ -575,6 +581,8 @@ static int flv_read_packet(AVFormatContext *s, AVPacket *pkt)
     pkt->dts = dts;
     pkt->pts = pts == AV_NOPTS_VALUE ? dts : pts;
     pkt->stream_index = st->index;
+    if(st->codec->codec_id == CODEC_ID_NELLYMOSER)
+        av_packet_new_side_data(pkt, 'F', 1)[0]= flags;
 
     if (    stream_type == FLV_STREAM_TYPE_AUDIO ||
             ((flags & FLV_VIDEO_FRAMETYPE_MASK) == FLV_FRAME_KEY) ||

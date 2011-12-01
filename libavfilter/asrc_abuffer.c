@@ -241,7 +241,7 @@ int av_asrc_buffer_add_buffer(AVFilterContext *ctx,
 
     av_samples_fill_arrays(data, linesize,
                            buf, nb_channels, nb_samples,
-                           sample_fmt, planar, 16);
+                           sample_fmt, 16);
 
     return av_asrc_buffer_add_samples(ctx,
                                       data, linesize, nb_samples,
@@ -362,8 +362,8 @@ AVFilter avfilter_asrc_abuffer = {
     .init        = init,
     .uninit      = uninit,
 
-    .inputs      = (AVFilterPad[]) {{ .name = NULL }},
-    .outputs     = (AVFilterPad[]) {{ .name            = "default",
+    .inputs      = (const AVFilterPad[]) {{ .name = NULL }},
+    .outputs     = (const AVFilterPad[]) {{ .name      = "default",
                                       .type            = AVMEDIA_TYPE_AUDIO,
                                       .request_frame   = request_frame,
                                       .poll_frame      = poll_frame,

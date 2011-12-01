@@ -31,7 +31,7 @@
 #include "libavutil/avassert.h"
 #include "libswscale/swscale.h"
 
-static const char *var_names[] = {
+static const char * const var_names[] = {
     "in_w",   "iw",
     "in_h",   "ih",
     "out_w",  "ow",
@@ -304,7 +304,7 @@ static void draw_slice(AVFilterLink *link, int y, int h, int slice_dir)
         scale->slice_y = link->dst->outputs[0]->h;
 
     if(scale->interlaced>0 || (scale->interlaced<0 && link->cur_buf->video->interlaced)){
-        av_assert0(y%4 == 0);
+        av_assert0(y%(2<<scale->vsub) == 0);
         out_h = scale_slice(link, scale->isws[0], y, (h+1)/2, 2, 0);
         out_h+= scale_slice(link, scale->isws[1], y,  h   /2, 2, 1);
     }else{
@@ -329,13 +329,13 @@ AVFilter avfilter_vf_scale = {
 
     .priv_size = sizeof(ScaleContext),
 
-    .inputs    = (AVFilterPad[]) {{ .name             = "default",
+    .inputs    = (const AVFilterPad[]) {{ .name       = "default",
                                     .type             = AVMEDIA_TYPE_VIDEO,
                                     .start_frame      = start_frame,
                                     .draw_slice       = draw_slice,
                                     .min_perms        = AV_PERM_READ, },
                                   { .name = NULL}},
-    .outputs   = (AVFilterPad[]) {{ .name             = "default",
+    .outputs   = (const AVFilterPad[]) {{ .name       = "default",
                                     .type             = AVMEDIA_TYPE_VIDEO,
                                     .config_props     = config_props, },
                                   { .name = NULL}},

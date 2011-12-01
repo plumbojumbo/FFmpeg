@@ -30,6 +30,14 @@ tests/data/asynth-16000-1.sw: tests/audiogen$(HOSTEXESUF)
 	@mkdir -p tests/data
 	$(M)./$< $@ 16000 1
 
+tests/data/mapchan-6ch.sw: tests/audiogen$(HOSTEXESUF)
+	@mkdir -p tests/data
+	$(M)./$< $@ 22050 6
+
+tests/data/mapchan-mono.sw: tests/audiogen$(HOSTEXESUF)
+	@mkdir -p tests/data
+	$(M)./$< $@ 22050 1
+
 tests/data/asynth%.sw tests/vsynth%/00.pgm: TAG = GEN
 
 include $(SRC_PATH)/tests/fate.mak
@@ -89,7 +97,7 @@ fate-seek:   $(FATE_SEEK)
 ifdef SAMPLES
 FATE += $(FATE_TESTS) $(FATE_TESTS-yes)
 fate-rsync:
-	rsync -vaLW rsync://fate.ffmpeg.org/fate-suite/ $(SAMPLES)
+	rsync -vaLW --timeout=60 --contimeout=60 rsync://fate.ffmpeg.org/fate-suite/ $(SAMPLES)
 else
 fate-rsync:
 	@echo "use 'make fate-rsync SAMPLES=/path/to/samples' to sync the fate suite"

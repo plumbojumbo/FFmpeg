@@ -21,6 +21,40 @@
 #ifndef AVFORMAT_AVFORMAT_H
 #define AVFORMAT_AVFORMAT_H
 
+/**
+ * @defgroup libavf I/O and Muxing/Demuxing Library
+ * @{
+ *
+ * @defgroup lavf_decoding Demuxing
+ * @{
+ * @}
+ *
+ * @defgroup lavf_encoding Muxing
+ * @{
+ * @}
+ *
+ * @defgroup lavf_proto I/O Read/Write
+ * @{
+ * @}
+ *
+ * @defgroup lavf_codec Demuxers
+ * @{
+ * @defgroup lavf_codec_native Native Demuxers
+ * @{
+ * @}
+ * @defgroup lavf_codec_wrappers External library wrappers
+ * @{
+ * @}
+ * @}
+ * @defgroup lavf_protos I/O Protocols
+ * @{
+ * @}
+ * @defgroup lavf_internal Internal
+ * @{
+ * @}
+ * @}
+ *
+ */
 
 /**
  * Return the LIBAVFORMAT_VERSION_INT constant.
@@ -666,6 +700,9 @@ typedef struct AVStream {
      */
     int stream_identifier;
 
+    int64_t interleaver_chunk_size;
+    int64_t interleaver_chunk_duration;
+
     /**
      * Stream informations used internally by av_find_stream_info()
      */
@@ -765,17 +802,56 @@ typedef struct AVChapter {
  * New fields can be added to the end with minor version bumps.
  * Removal, reordering and changes to existing fields require a major
  * version bump.
- * sizeof(AVFormatContext) must not be used outside libav*.
+ * sizeof(AVFormatContext) must not be used outside libav*, use
+ * avformat_alloc_context() to create an AVFormatContext.
  */
 typedef struct AVFormatContext {
-    const AVClass *av_class; /**< Set by avformat_alloc_context. */
-    /* Can only be iformat or oformat, not both at the same time. */
+    /**
+     * A class for logging and AVOptions. Set by avformat_alloc_context().
+     * Exports (de)muxer private options if they exist.
+     */
+    const AVClass *av_class;
+
+    /**
+     * Can only be iformat or oformat, not both at the same time.
+     *
+     * decoding: set by avformat_open_input().
+     * encoding: set by the user.
+     */
     struct AVInputFormat *iformat;
     struct AVOutputFormat *oformat;
+
+    /**
+     * Format private data. This is an AVOptions-enabled struct
+     * if and only if iformat/oformat.priv_class is not NULL.
+     */
     void *priv_data;
+
+    /*
+     * I/O context.
+     *
+     * decoding: either set by the user before avformat_open_input() (then
+     * the user must close it manually) or set by avformat_open_input().
+     * encoding: set by the user.
+     *
+     * Do NOT set this field if AVFMT_NOFILE flag is set in
+     * iformat/oformat.flags. In such a case, the (de)muxer will handle
+     * I/O in some other way and this field will be NULL.
+     */
     AVIOContext *pb;
+
+    /**
+     * A list of all streams in the file. New streams are created with
+     * avformat_new_stream().
+     *
+     * decoding: streams are created by libavformat in avformat_open_input().
+     * If AVFMTCTX_NOHEADER is set in ctx_flags, then new streams may also
+     * appear in av_read_frame().
+     * encoding: streams are created by the user before avformat_write_header().
+     */
     unsigned int nb_streams;
     AVStream **streams;
+
     char filename[1024]; /**< input or output filename */
     /* stream info */
 #if FF_API_TIMESTAMP
@@ -886,8 +962,8 @@ typedef struct AVFormatContext {
     unsigned int probesize;
 
     /**
-     * Maximum time (in AV_TIME_BASE units) during which the input should
-     * be analyzed in av_find_stream_info().
+     * decoding: maximum time (in AV_TIME_BASE units) during which the input should
+     * be analyzed in avformat_find_stream_info().
      */
     int max_analyze_duration;
 
@@ -989,10 +1065,45 @@ typedef struct AVFormatContext {
     int error_recognition;
 
     /**
+     * Custom interrupt callbacks for the I/O layer.
+     *
+     * decoding: set by the user before avformat_open_input().
+     * encoding: set by the user before avformat_write_header()
+     * (mainly useful for AVFMT_NOFILE formats). The callback
+     * should also be passed to avio_open2() if it's used to
+     * open the file.
+     */
+    AVIOInterruptCB interrupt_callback;
+
+    /**
      * Transport stream id.
      * This will be moved into demuxer private options. Thus no API/ABI compatibility
      */
     int ts_id;
+
+    /**
+     * Audio preload in microseconds.
+     * Note, not all formats support this and unpredictable things may happen if it is used when not supported.
+     * - encoding: Set by user via AVOptions (NO direct access)
+     * - decoding: unused
+     */
+    int audio_preload;
+
+    /**
+     * Max chunk time in microseconds.
+     * Note, not all formats support this and unpredictable things may happen if it is used when not supported.
+     * - encoding: Set by user via AVOptions (NO direct access)
+     * - decoding: unused
+     */
+    int max_chunk_duration;
+
+    /**
+     * Max chunk size in bytes
+     * Note, not all formats support this and unpredictable things may happen if it is used when not supported.
+     * - encoding: Set by user via AVOptions (NO direct access)
+     * - decoding: unused
+     */
+    int max_chunk_size;
 
     /*****************************************************************
      * All fields below this line are not part of the public API. They
@@ -1547,18 +1658,14 @@ AVStream *avformat_new_stream(AVFormatContext *s, AVCodec *c);
 
 AVProgram *av_new_program(AVFormatContext *s, int id);
 
+#if FF_API_SET_PTS_INFO
 /**
- * Set the pts for a given stream. If the new values would be invalid
- * (<= 0), it leaves the AVStream unchanged.
- *
- * @param s stream
- * @param pts_wrap_bits number of bits effectively used by the pts
- *        (used for wrap control, 33 is the value for MPEG)
- * @param pts_num numerator to convert to seconds (MPEG: 1)
- * @param pts_den denominator to convert to seconds (MPEG: 90000)
+ * @deprecated this function is not supposed to be called outside of lavf
  */
+attribute_deprecated
 void av_set_pts_info(AVStream *s, int pts_wrap_bits,
                      unsigned int pts_num, unsigned int pts_den);
+#endif
 
 #define AVSEEK_FLAG_BACKWARD 1 ///< seek backward
 #define AVSEEK_FLAG_BYTE     2 ///< seeking based on position in bytes
@@ -1854,5 +1961,20 @@ int avformat_query_codec(AVOutputFormat *ofmt, enum CodecID codec_id, int std_co
  * @see av_opt_find().
  */
 const AVClass *avformat_get_class(void);
+
+/**
+ * Do global initialization of network components. This is optional,
+ * but recommended, since it avoids the overhead of implicitly
+ * doing the setup for each session.
+ *
+ * Calling this function will become mandatory if using network
+ * protocols at some major version bump.
+ */
+int avformat_network_init(void);
+
+/**
+ * Undo the initialization done by avformat_network_init.
+ */
+int avformat_network_deinit(void);
 
 #endif /* AVFORMAT_AVFORMAT_H */

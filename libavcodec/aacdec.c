@@ -262,6 +262,23 @@ static av_cold int output_configure(AACContext *ac,
     return 0;
 }
 
+static void flush(AVCodecContext *avctx)
+{
+    AACContext *ac= avctx->priv_data;
+    int type, i, j;
+
+    for (type = 3; type >= 0; type--) {
+        for (i = 0; i < MAX_ELEM_ID; i++) {
+            ChannelElement *che = ac->che[type][i];
+            if (che) {
+                for (j = 0; j <= 1; j++) {
+                    memset(che->ch[j].saved, 0, sizeof(che->ch[j].saved));
+                }
+            }
+        }
+    }
+}
+
 /**
  * Decode an array of 4 bit element IDs, optionally interleaved with a stereo/mono switching bit.
  *
@@ -2081,13 +2098,14 @@ static int parse_adts_frame_header(AACContext *ac, GetBitContext *gb)
 
     size = avpriv_aac_parse_header(gb, &hdr_info);
     if (size > 0) {
-        if (hdr_info.chan_config) {
+        if (hdr_info.chan_config && (hdr_info.chan_config!=ac->m4ac.chan_config || ac->m4ac.sample_rate!=hdr_info.sample_rate)) {
             enum ChannelPosition new_che_pos[4][MAX_ELEM_ID];
             memset(new_che_pos, 0, 4 * MAX_ELEM_ID * sizeof(new_che_pos[0][0]));
             ac->m4ac.chan_config = hdr_info.chan_config;
             if (set_default_channel_config(ac->avctx, new_che_pos, hdr_info.chan_config))
                 return -7;
-            if (output_configure(ac, ac->che_pos, new_che_pos, hdr_info.chan_config, OC_TRIAL_FRAME))
+            if (output_configure(ac, ac->che_pos, new_che_pos, hdr_info.chan_config,
+                                 FFMAX(ac->output_configured, OC_TRIAL_FRAME)))
                 return -7;
         } else if (ac->output_configured != OC_LOCKED) {
             ac->m4ac.chan_config = 0;
@@ -2588,4 +2606,5 @@ AVCodec ff_aac_latm_decoder = {
     },
     .capabilities = CODEC_CAP_CHANNEL_CONF,
     .channel_layouts = aac_channel_layout,
+    .flush = flush,
 };

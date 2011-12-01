@@ -38,6 +38,7 @@
 #include "config.h"
 #include "ac3dec.h"
 #include "vorbis.h"
+#include "diracdsp.h"
 
 uint8_t ff_cropTbl[256 + 2 * MAX_NEG_CROP] = {0, };
 uint32_t ff_squareTbl[512] = {0, };
@@ -1328,6 +1329,51 @@ void ff_avg_rv40_qpel8_mc33_c(uint8_t *dst, uint8_t *src, int stride){
 }
 #endif /* CONFIG_RV40_DECODER */
 
+#if CONFIG_DIRAC_DECODER
+#define DIRAC_MC(OPNAME)\
+void ff_ ## OPNAME ## _dirac_pixels8_c(uint8_t *dst, const uint8_t *src[5], int stride, int h)\
+{\
+     OPNAME ## _pixels8_8_c(dst, src[0], stride, h);\
+}\
+void ff_ ## OPNAME ## _dirac_pixels16_c(uint8_t *dst, const uint8_t *src[5], int stride, int h)\
+{\
+    OPNAME ## _pixels16_8_c(dst, src[0], stride, h);\
+}\
+void ff_ ## OPNAME ## _dirac_pixels32_c(uint8_t *dst, const uint8_t *src[5], int stride, int h)\
+{\
+    OPNAME ## _pixels16_8_c(dst   , src[0]   , stride, h);\
+    OPNAME ## _pixels16_8_c(dst+16, src[0]+16, stride, h);\
+}\
+void ff_ ## OPNAME ## _dirac_pixels8_l2_c(uint8_t *dst, const uint8_t *src[5], int stride, int h)\
+{\
+    OPNAME ## _pixels8_l2_8(dst, src[0], src[1], stride, stride, stride, h);\
+}\
+void ff_ ## OPNAME ## _dirac_pixels16_l2_c(uint8_t *dst, const uint8_t *src[5], int stride, int h)\
+{\
+    OPNAME ## _pixels16_l2_8(dst, src[0], src[1], stride, stride, stride, h);\
+}\
+void ff_ ## OPNAME ## _dirac_pixels32_l2_c(uint8_t *dst, const uint8_t *src[5], int stride, int h)\
+{\
+    OPNAME ## _pixels16_l2_8(dst   , src[0]   , src[1]   , stride, stride, stride, h);\
+    OPNAME ## _pixels16_l2_8(dst+16, src[0]+16, src[1]+16, stride, stride, stride, h);\
+}\
+void ff_ ## OPNAME ## _dirac_pixels8_l4_c(uint8_t *dst, const uint8_t *src[5], int stride, int h)\
+{\
+    OPNAME ## _pixels8_l4_8(dst, src[0], src[1], src[2], src[3], stride, stride, stride, stride, stride, h);\
+}\
+void ff_ ## OPNAME ## _dirac_pixels16_l4_c(uint8_t *dst, const uint8_t *src[5], int stride, int h)\
+{\
+    OPNAME ## _pixels16_l4_8(dst, src[0], src[1], src[2], src[3], stride, stride, stride, stride, stride, h);\
+}\
+void ff_ ## OPNAME ## _dirac_pixels32_l4_c(uint8_t *dst, const uint8_t *src[5], int stride, int h)\
+{\
+    OPNAME ## _pixels16_l4_8(dst   , src[0]   , src[1]   , src[2]   , src[3]   , stride, stride, stride, stride, stride, h);\
+    OPNAME ## _pixels16_l4_8(dst+16, src[0]+16, src[1]+16, src[2]+16, src[3]+16, stride, stride, stride, stride, stride, h);\
+}
+DIRAC_MC(put)
+DIRAC_MC(avg)
+#endif
+
 static void wmv2_mspel8_v_lowpass(uint8_t *dst, uint8_t *src, int dstStride, int srcStride, int w){
     uint8_t *cm = ff_cropTbl + MAX_NEG_CROP;
     int i;
@@ -2497,6 +2543,18 @@ static void butterflies_float_c(float *restrict v1, float *restrict v2,
     }
 }
 
+static void butterflies_float_interleave_c(float *dst, const float *src0,
+                                           const float *src1, int len)
+{
+    int i;
+    for (i = 0; i < len; i++) {
+        float f1 = src0[i];
+        float f2 = src1[i];
+        dst[2*i    ] = f1 + f2;
+        dst[2*i + 1] = f1 - f2;
+    }
+}
+
 static float scalarproduct_float_c(const float *v1, const float *v2, int len)
 {
     float p = 0.0;
@@ -3020,6 +3078,7 @@ av_cold void dsputil_init(DSPContext* c, AVCodecContext *avctx)
     c->vector_clip_int32 = vector_clip_int32_c;
     c->scalarproduct_float = scalarproduct_float_c;
     c->butterflies_float = butterflies_float_c;
+    c->butterflies_float_interleave = butterflies_float_interleave_c;
     c->vector_fmul_scalar = vector_fmul_scalar_c;
     c->vector_fmac_scalar = vector_fmac_scalar_c;
 

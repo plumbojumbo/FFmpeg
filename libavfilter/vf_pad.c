@@ -35,7 +35,7 @@
 #include "libavutil/mathematics.h"
 #include "drawutils.h"
 
-static const char *var_names[] = {
+static const char * const var_names[] = {
     "in_w",   "iw",
     "in_h",   "ih",
     "out_w",  "ow",
@@ -114,7 +114,7 @@ static av_cold int init(AVFilterContext *ctx, const char *args, void *opaque)
     av_strlcpy(pad->y_expr, "0" , sizeof(pad->h_expr));
 
     if (args)
-        sscanf(args, "%255[^:]:%255[^:]:%255[^:]:%255[^:]:%255s",
+        sscanf(args, "%255[^:]:%255[^:]:%255[^:]:%255[^:]:%127s",
                pad->w_expr, pad->h_expr, pad->x_expr, pad->y_expr, color_string);
 
     if (av_parse_color(pad->color, color_string, -1, ctx) < 0)
@@ -412,7 +412,7 @@ AVFilter avfilter_vf_pad = {
     .uninit        = uninit,
     .query_formats = query_formats,
 
-    .inputs    = (AVFilterPad[]) {{ .name             = "default",
+    .inputs    = (const AVFilterPad[]) {{ .name       = "default",
                                     .type             = AVMEDIA_TYPE_VIDEO,
                                     .config_props     = config_input,
                                     .get_video_buffer = get_video_buffer,
@@ -421,7 +421,7 @@ AVFilter avfilter_vf_pad = {
                                     .end_frame        = end_frame, },
                                   { .name = NULL}},
 
-    .outputs   = (AVFilterPad[]) {{ .name             = "default",
+    .outputs   = (const AVFilterPad[]) {{ .name       = "default",
                                     .type             = AVMEDIA_TYPE_VIDEO,
                                     .config_props     = config_output, },
                                   { .name = NULL}},

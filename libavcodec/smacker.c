@@ -33,6 +33,7 @@
 
 #include "avcodec.h"
 #include "libavutil/audioconvert.h"
+#include "mathops.h"
 
 #define ALT_BITSTREAM_READER_LE
 #include "get_bits.h"
@@ -367,7 +368,7 @@ static int decode_frame(AVCodecContext *avctx, void *data, int *data_size, AVPac
     if(buf_size <= 769)
         return 0;
 
-    smk->pic.reference = 1;
+    smk->pic.reference = 3;
     smk->pic.buffer_hints = FF_BUFFER_HINTS_VALID | FF_BUFFER_HINTS_PRESERVE | FF_BUFFER_HINTS_REUSABLE;
     if(avctx->reget_buffer(avctx, &smk->pic) < 0){
         av_log(avctx, AV_LOG_ERROR, "get_buffer() failed\n");
@@ -385,7 +386,7 @@ static int decode_frame(AVCodecContext *avctx, void *data, int *data_size, AVPac
 
     buf++;
     for(i = 0; i < 256; i++)
-        *pal++ = bytestream_get_be24(&buf);
+        *pal++ = 0xFF << 24 | bytestream_get_be24(&buf);
     buf_size -= 769;
 
     last_reset(smk->mmap_tbl, smk->mmap_last);
@@ -580,7 +581,7 @@ static int smka_decode_frame(AVCodecContext *avctx, void *data, int *data_size, 
     HuffContext h[4];
     VLC vlc[4];
     int16_t *samples = data;
-    int8_t *samples8 = data;
+    uint8_t *samples8 = data;
     int val;
     int i, res;
     int unp_size;
@@ -656,8 +657,8 @@ static int smka_decode_frame(AVCodecContext *avctx, void *data, int *data_size, 
                 else
                     res = 0;
                 val |= h[3].values[res] << 8;
-                pred[1] += (int16_t)val;
-                *samples++ = pred[1];
+                pred[1] += sign_extend(val, 16);
+                *samples++ = av_clip_int16(pred[1]);
             } else {
                 if(vlc[0].table)
                     res = get_vlc2(&gb, vlc[0].table, SMKTREE_BITS, 3);
@@ -669,8 +670,8 @@ static int smka_decode_frame(AVCodecContext *avctx, void *data, int *data_size, 
                 else
                     res = 0;
                 val |= h[1].values[res] << 8;
-                pred[0] += val;
-                *samples++ = pred[0];
+                pred[0] += sign_extend(val, 16);
+                *samples++ = av_clip_int16(pred[0]);
             }
         }
     } else { //8-bit data
@@ -684,15 +685,15 @@ static int smka_decode_frame(AVCodecContext *avctx, void *data, int *data_size, 
                     res = get_vlc2(&gb, vlc[1].table, SMKTREE_BITS, 3);
                 else
                     res = 0;
-                pred[1] += (int8_t)h[1].values[res];
-                *samples8++ = pred[1];
+                pred[1] += sign_extend(h[1].values[res], 8);
+                *samples8++ = av_clip_uint8(pred[1]);
             } else {
                 if(vlc[0].table)
                     res = get_vlc2(&gb, vlc[0].table, SMKTREE_BITS, 3);
                 else
                     res = 0;
-                pred[0] += (int8_t)h[0].values[res];
-                *samples8++ = pred[0];
+                pred[0] += sign_extend(h[0].values[res], 8);
+                *samples8++ = av_clip_uint8(pred[0]);
             }
         }
     }

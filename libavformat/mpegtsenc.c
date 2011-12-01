@@ -293,6 +293,12 @@ static void mpegts_write_pmt(AVFormatContext *s, MpegTSService *service)
         /* write optional descriptors here */
         switch(st->codec->codec_type) {
         case AVMEDIA_TYPE_AUDIO:
+            if(st->codec->codec_id==CODEC_ID_EAC3){
+                *q++=0x7a; // EAC3 descriptor see A038 DVB SI
+                *q++=1; // 1 byte, all flags sets to 0
+                *q++=0; // omit all fields...
+            }
+
             if (lang) {
                 char *p;
                 char *next = lang->value;
@@ -508,7 +514,7 @@ static int mpegts_write_header(AVFormatContext *s)
     /* assign pids to each stream */
     for(i = 0;i < s->nb_streams; i++) {
         st = s->streams[i];
-        av_set_pts_info(st, 33, 1, 90000);
+        avpriv_set_pts_info(st, 33, 1, 90000);
         ts_st = av_mallocz(sizeof(MpegTSWriteStream));
         if (!ts_st)
             goto fail;
@@ -1000,7 +1006,7 @@ static int mpegts_write_packet(AVFormatContext *s, AVPacket *pkt)
             return -1;
         if ((AV_RB16(pkt->data) & 0xfff0) != 0xfff0) {
             ADTSContext *adts = ts_st->adts;
-            int new_size;
+            int new_size, err;
             if (!adts) {
                 av_log(s, AV_LOG_ERROR, "aac bitstream not in adts format "
                        "and extradata missing\n");
@@ -1012,7 +1018,12 @@ static int mpegts_write_packet(AVFormatContext *s, AVPacket *pkt)
             data = av_malloc(new_size);
             if (!data)
                 return AVERROR(ENOMEM);
-            ff_adts_write_frame_header(adts, data, pkt->size, adts->pce_size);
+            err = ff_adts_write_frame_header(adts, data, pkt->size,
+                                             adts->pce_size);
+            if (err < 0) {
+                av_free(data);
+                return err;
+            }
             if (adts->pce_size) {
                 memcpy(data+ADTS_HEADER_SIZE, adts->pce_data, adts->pce_size);
                 adts->pce_size = 0;

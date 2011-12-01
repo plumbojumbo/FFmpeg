@@ -1,5 +1,5 @@
 /*
- * AVISynth support for ffmpeg system
+ * AVISynth support
  * Copyright (c) 2006 DivX, Inc.
  *
  * This file is part of FFmpeg.
@@ -20,6 +20,7 @@
  */
 
 #include "avformat.h"
+#include "internal.h"
 #include "riff.h"
 
 #include <windows.h>
@@ -145,7 +146,7 @@ static int avisynth_read_header(AVFormatContext *s, AVFormatParameters *ap)
 
               st->codec->stream_codec_tag = stream->info.fccHandler;
 
-              av_set_pts_info(st, 64, info.dwScale, info.dwRate);
+              avpriv_set_pts_info(st, 64, info.dwScale, info.dwRate);
               st->start_time = stream->info.dwStart;
             }
         }

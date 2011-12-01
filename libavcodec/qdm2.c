@@ -170,7 +170,7 @@ typedef struct {
     /// I/O data
     const uint8_t *compressed_data;
     int compressed_size;
-    float output_buffer[QDM2_MAX_FRAME_SIZE * 2];
+    float output_buffer[QDM2_MAX_FRAME_SIZE * MPA_MAX_CHANNELS * 2];
 
     /// Synthesis filter
     MPADSPContext mpadsp;
@@ -1329,7 +1329,7 @@ static void qdm2_fft_decode_tones (QDM2Context *q, int duration, GetBitContext *
     local_int_10 = 1 << (q->group_order - duration - 1);
     offset = 1;
 
-    while (1) {
+    while (get_bits_left(gb)>0) {
         if (q->superblocktype_2_3) {
             while ((n = qdm2_get_vlc(gb, &vlc_tab_fft_tone_offset[local_int_8], 1, 2)) < 2) {
                 offset = 1;
@@ -1895,6 +1895,9 @@ static int qdm2_decode (QDM2Context *q, const uint8_t *in, int16_t *out)
 {
     int ch, i;
     const int frame_size = (q->frame_size * q->channels);
+
+    if((unsigned)frame_size > FF_ARRAY_ELEMS(q->output_buffer)/2)
+        return -1;
 
     /* select input buffer */
     q->compressed_data = in;

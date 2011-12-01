@@ -30,6 +30,7 @@
  */
 #include <time.h>
 #include "avformat.h"
+#include "internal.h"
 #include "libavcodec/dvdata.h"
 #include "libavutil/intreadwrite.h"
 #include "libavutil/mathematics.h"
@@ -96,7 +97,7 @@ static const uint8_t* dv_extract_pack(uint8_t* frame, enum dv_pack_type t)
 /*
  * There's a couple of assumptions being made here:
  * 1. By default we silence erroneous (0x8000/16bit 0x800/12bit) audio samples.
- *    We can pass them upwards when ffmpeg will be ready to deal with them.
+ *    We can pass them upwards when libavcodec will be ready to deal with them.
  * 2. We don't do software emphasis.
  * 3. Audio is always returned as 16bit linear samples: 12bit nonlinear samples
  *    are converted into 16bit linear ones.
@@ -214,7 +215,7 @@ static int dv_extract_audio_info(DVDemuxContext* c, uint8_t* frame)
            c->ast[i] = avformat_new_stream(c->fctx, NULL);
            if (!c->ast[i])
                break;
-           av_set_pts_info(c->ast[i], 64, 1, 30000);
+           avpriv_set_pts_info(c->ast[i], 64, 1, 30000);
            c->ast[i]->codec->codec_type = AVMEDIA_TYPE_AUDIO;
            c->ast[i]->codec->codec_id   = CODEC_ID_PCM_S16LE;
 
@@ -244,7 +245,7 @@ static int dv_extract_video_info(DVDemuxContext *c, uint8_t* frame)
     if (c->sys) {
         avctx = c->vst->codec;
 
-        av_set_pts_info(c->vst, 64, c->sys->time_base.num,
+        avpriv_set_pts_info(c->vst, 64, c->sys->time_base.num,
                         c->sys->time_base.den);
         avctx->time_base= c->sys->time_base;
         if (!avctx->width){

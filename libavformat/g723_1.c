@@ -32,7 +32,7 @@ static int g723_1_init(AVFormatContext *s, AVFormatParameters *ap)
 {
     AVStream *st;
 
-    st = av_new_stream(s, 0);
+    st = avformat_new_stream(s, NULL);
     if (!st)
         return AVERROR(ENOMEM);
 
@@ -50,8 +50,8 @@ static int g723_1_read_packet(AVFormatContext *s, AVPacket *pkt)
 {
     int size, byte, ret;
 
-    pkt->pos = url_ftell(s->pb);
-    byte     = get_byte(s->pb);
+    pkt->pos = avio_tell(s->pb);
+    byte     = avio_r8(s->pb);
     size     = frame_size[byte & 3];
 
     ret = av_new_packet(pkt, size);
@@ -62,7 +62,7 @@ static int g723_1_read_packet(AVFormatContext *s, AVPacket *pkt)
     pkt->duration     = 240;
     pkt->stream_index = 0;
 
-    ret = get_buffer(s->pb, pkt->data + 1, size - 1);
+    ret = avio_read(s->pb, pkt->data + 1, size - 1);
     if (ret < size - 1) {
         av_free_packet(pkt);
         return ret < 0 ? ret : AVERROR_EOF;

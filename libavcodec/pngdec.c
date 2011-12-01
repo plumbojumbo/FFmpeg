@@ -498,7 +498,8 @@ static int decode_frame(AVCodecContext *avctx,
                     avctx->pix_fmt = PIX_FMT_MONOBLACK;
                 } else if (s->color_type == PNG_COLOR_TYPE_PALETTE) {
                     avctx->pix_fmt = PIX_FMT_PAL8;
-                } else if (s->color_type == PNG_COLOR_TYPE_GRAY_ALPHA) {
+                } else if (s->bit_depth == 8 &&
+                           s->color_type == PNG_COLOR_TYPE_GRAY_ALPHA) {
                     avctx->pix_fmt = PIX_FMT_GRAY8A;
                 } else {
                     goto fail;
@@ -506,7 +507,7 @@ static int decode_frame(AVCodecContext *avctx,
                 if(p->data[0])
                     avctx->release_buffer(avctx, p);
 
-                p->reference= 1;
+                p->reference= 3;
                 if(avctx->get_buffer(avctx, p) < 0){
                     av_log(avctx, AV_LOG_ERROR, "get_buffer() failed\n");
                     goto fail;

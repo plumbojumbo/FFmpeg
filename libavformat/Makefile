@@ -16,6 +16,8 @@ OBJS = allformats.o         \
        seek.o               \
        utils.o              \
 
+OBJS-$(CONFIG_NETWORK)                   += network.o
+
 # muxers/demuxers
 OBJS-$(CONFIG_A64_MUXER)                 += a64.o
 OBJS-$(CONFIG_AAC_DEMUXER)               += aacdec.o rawdec.o
@@ -23,6 +25,7 @@ OBJS-$(CONFIG_AC3_DEMUXER)               += ac3dec.o rawdec.o
 OBJS-$(CONFIG_AC3_MUXER)                 += rawenc.o
 OBJS-$(CONFIG_ACT_DEMUXER)               += act.o
 OBJS-$(CONFIG_ADF_DEMUXER)               += bintext.o sauce.o
+OBJS-$(CONFIG_ADX_DEMUXER)               += adxdec.o
 OBJS-$(CONFIG_ADTS_MUXER)                += adtsenc.o
 OBJS-$(CONFIG_AEA_DEMUXER)               += aea.o pcm.o
 OBJS-$(CONFIG_AIFF_DEMUXER)              += aiffdec.o riff.o pcm.o isom.o
@@ -40,8 +43,8 @@ OBJS-$(CONFIG_ASS_DEMUXER)               += assdec.o
 OBJS-$(CONFIG_ASS_MUXER)                 += assenc.o
 OBJS-$(CONFIG_AU_DEMUXER)                += au.o pcm.o
 OBJS-$(CONFIG_AU_MUXER)                  += au.o
-OBJS-$(CONFIG_AVI_DEMUXER)               += avidec.o riff.o avi.o
-OBJS-$(CONFIG_AVI_MUXER)                 += avienc.o riff.o avi.o
+OBJS-$(CONFIG_AVI_DEMUXER)               += avidec.o riff.o
+OBJS-$(CONFIG_AVI_MUXER)                 += avienc.o riff.o
 OBJS-$(CONFIG_AVISYNTH)                  += avisynth.o
 OBJS-$(CONFIG_AVM2_MUXER)                += swfenc.o
 OBJS-$(CONFIG_AVS_DEMUXER)               += avs.o vocdec.o voc.o
@@ -51,6 +54,7 @@ OBJS-$(CONFIG_BINK_DEMUXER)              += bink.o
 OBJS-$(CONFIG_BINTEXT_DEMUXER)           += bintext.o sauce.o
 OBJS-$(CONFIG_BIT_DEMUXER)               += bit.o
 OBJS-$(CONFIG_BIT_MUXER)                 += bit.o
+OBJS-$(CONFIG_BMV_DEMUXER)               += bmv.o
 OBJS-$(CONFIG_C93_DEMUXER)               += c93.o vocdec.o voc.o
 OBJS-$(CONFIG_CAF_DEMUXER)               += cafdec.o caf.o mov.o riff.o isom.o
 OBJS-$(CONFIG_CAF_MUXER)                 += cafenc.o caf.o riff.o isom.o
@@ -93,7 +97,7 @@ OBJS-$(CONFIG_FOURXM_DEMUXER)            += 4xm.o
 OBJS-$(CONFIG_FRAMECRC_MUXER)            += framecrcenc.o
 OBJS-$(CONFIG_FRAMEMD5_MUXER)            += md5enc.o
 OBJS-$(CONFIG_GIF_MUXER)                 += gif.o
-OBJS-$(CONFIG_GSM_DEMUXER)               += rawdec.o
+OBJS-$(CONFIG_GSM_DEMUXER)               += gsmdec.o
 OBJS-$(CONFIG_GXF_DEMUXER)               += gxf.o
 OBJS-$(CONFIG_GXF_MUXER)                 += gxfenc.o audiointerleave.o
 OBJS-$(CONFIG_G722_DEMUXER)              += rawdec.o
@@ -259,6 +263,7 @@ OBJS-$(CONFIG_RTPDEC)                    += rdt.o         \
                                             rtpdec.o      \
                                             rtpdec_amr.o  \
                                             rtpdec_asf.o  \
+                                            rtpdec_g726.o \
                                             rtpdec_h263.o \
                                             rtpdec_h264.o \
                                             rtpdec_latm.o \
@@ -292,7 +297,7 @@ OBJS-$(CONFIG_SWF_DEMUXER)               += swfdec.o
 OBJS-$(CONFIG_SWF_MUXER)                 += swfenc.o
 OBJS-$(CONFIG_THP_DEMUXER)               += thp.o
 OBJS-$(CONFIG_TIERTEXSEQ_DEMUXER)        += tiertexseq.o
-OBJS-$(CONFIG_TIMECODE_V2_MUXER)         += timecode_v2.o
+OBJS-$(CONFIG_MKVTIMESTAMP_V2_MUXER)     += mkvtimestamp_v2.o
 OBJS-$(CONFIG_TMV_DEMUXER)               += tmv.o
 OBJS-$(CONFIG_TRUEHD_DEMUXER)            += rawdec.o
 OBJS-$(CONFIG_TRUEHD_MUXER)              += rawenc.o
@@ -317,7 +322,7 @@ OBJS-$(CONFIG_WSAUD_DEMUXER)             += westwood.o
 OBJS-$(CONFIG_WSVQA_DEMUXER)             += westwood.o
 OBJS-$(CONFIG_WTV_DEMUXER)               += wtvdec.o wtv.o asfdec.o asf.o asfcrypt.o \
                                             avlanguage.o mpegts.o isom.o riff.o
-OBJS-$(CONFIG_WTV_MUXER)                 += wtvenc.o wtv.o asf.o riff.o
+OBJS-$(CONFIG_WTV_MUXER)                 += wtvenc.o wtv.o asf.o asfenc.o riff.o
 OBJS-$(CONFIG_WV_DEMUXER)                += wv.o apetag.o
 OBJS-$(CONFIG_XA_DEMUXER)                += xa.o
 OBJS-$(CONFIG_XBIN_DEMUXER)              += bintext.o sauce.o
@@ -342,6 +347,8 @@ OBJS-$(CONFIG_CRYPTO_PROTOCOL)           += crypto.o
 OBJS-$(CONFIG_FILE_PROTOCOL)             += file.o
 OBJS-$(CONFIG_GOPHER_PROTOCOL)           += gopher.o
 OBJS-$(CONFIG_HTTP_PROTOCOL)             += http.o httpauth.o
+OBJS-$(CONFIG_HTTPPROXY_PROTOCOL)        += http.o httpauth.o
+OBJS-$(CONFIG_HTTPS_PROTOCOL)            += http.o httpauth.o
 OBJS-$(CONFIG_MMSH_PROTOCOL)             += mmsh.o mms.o asf.o
 OBJS-$(CONFIG_MMST_PROTOCOL)             += mmst.o mms.o asf.o
 OBJS-$(CONFIG_MD5_PROTOCOL)              += md5proto.o
@@ -354,6 +361,7 @@ OBJS-$(CONFIG_RTMP_PROTOCOL)             += $(RTMP-OBJS-yes)
 
 OBJS-$(CONFIG_RTP_PROTOCOL)              += rtpproto.o
 OBJS-$(CONFIG_TCP_PROTOCOL)              += tcp.o
+OBJS-$(CONFIG_TLS_PROTOCOL)              += tls.o
 OBJS-$(CONFIG_UDP_PROTOCOL)              += udp.o
 
 

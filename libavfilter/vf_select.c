@@ -27,7 +27,7 @@
 #include "libavutil/fifo.h"
 #include "avfilter.h"
 
-static const char *var_names[] = {
+static const char * const var_names[] = {
     "TB",                ///< timebase
 
     "pts",               ///< original pts in the file of the frame
@@ -157,7 +157,7 @@ static int config_input(AVFilterLink *inlink)
 
     select->var_values[VAR_INTERLACE_TYPE_P] = INTERLACE_TYPE_P;
     select->var_values[VAR_INTERLACE_TYPE_T] = INTERLACE_TYPE_T;
-    select->var_values[VAR_INTERLACE_TYPE_B] = INTERLACE_TYPE_B;;
+    select->var_values[VAR_INTERLACE_TYPE_B] = INTERLACE_TYPE_B;
 
     return 0;
 }
@@ -324,7 +324,7 @@ AVFilter avfilter_vf_select = {
 
     .priv_size = sizeof(SelectContext),
 
-    .inputs    = (AVFilterPad[]) {{ .name             = "default",
+    .inputs    = (const AVFilterPad[]) {{ .name       = "default",
                                     .type             = AVMEDIA_TYPE_VIDEO,
                                     .get_video_buffer = avfilter_null_get_video_buffer,
                                     .config_props     = config_input,
@@ -332,7 +332,7 @@ AVFilter avfilter_vf_select = {
                                     .draw_slice       = draw_slice,
                                     .end_frame        = end_frame },
                                   { .name = NULL }},
-    .outputs   = (AVFilterPad[]) {{ .name             = "default",
+    .outputs   = (const AVFilterPad[]) {{ .name       = "default",
                                     .type             = AVMEDIA_TYPE_VIDEO,
                                     .poll_frame       = poll_frame,
                                     .request_frame    = request_frame, },

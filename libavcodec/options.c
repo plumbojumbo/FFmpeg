@@ -330,7 +330,6 @@ static const AVOption options[]={
 {"ibias", "intra quant bias", OFFSET(intra_quant_bias), AV_OPT_TYPE_INT, {.dbl = FF_DEFAULT_QUANT_BIAS }, INT_MIN, INT_MAX, V|E},
 {"pbias", "inter quant bias", OFFSET(inter_quant_bias), AV_OPT_TYPE_INT, {.dbl = FF_DEFAULT_QUANT_BIAS }, INT_MIN, INT_MAX, V|E},
 {"color_table_id", NULL, OFFSET(color_table_id), AV_OPT_TYPE_INT, {.dbl = DEFAULT }, INT_MIN, INT_MAX},
-{"internal_buffer_count", NULL, OFFSET(internal_buffer_count), AV_OPT_TYPE_INT, {.dbl = DEFAULT }, INT_MIN, INT_MAX},
 {"global_quality", NULL, OFFSET(global_quality), AV_OPT_TYPE_INT, {.dbl = DEFAULT }, INT_MIN, INT_MAX, V|A|E},
 {"coder", NULL, OFFSET(coder_type), AV_OPT_TYPE_INT, {.dbl = DEFAULT }, INT_MIN, INT_MAX, V|E, "coder"},
 {"vlc", "variable length coder / huffman coder", 0, AV_OPT_TYPE_CONST, {.dbl = FF_CODER_TYPE_VLC }, INT_MIN, INT_MAX, V|E, "coder"},
@@ -352,7 +351,17 @@ static const AVOption options[]={
 {"nr", "noise reduction", OFFSET(noise_reduction), AV_OPT_TYPE_INT, {.dbl = DEFAULT }, INT_MIN, INT_MAX, V|E},
 {"rc_init_occupancy", "number of bits which should be loaded into the rc buffer before decoding starts", OFFSET(rc_initial_buffer_occupancy), AV_OPT_TYPE_INT, {.dbl = DEFAULT }, INT_MIN, INT_MAX, V|E},
 {"inter_threshold", NULL, OFFSET(inter_threshold), AV_OPT_TYPE_INT, {.dbl = DEFAULT }, INT_MIN, INT_MAX, V|E},
-{"flags2", NULL, OFFSET(flags2), AV_OPT_TYPE_FLAGS, {.dbl = CODEC_FLAG2_FASTPSKIP|CODEC_FLAG2_BIT_RESERVOIR|CODEC_FLAG2_PSY|CODEC_FLAG2_MBTREE }, 0, UINT_MAX, V|A|E|D, "flags2"},
+#if FF_API_X264_GLOBAL_OPTS
+#define X264_DEFAULTS CODEC_FLAG2_FASTPSKIP|CODEC_FLAG2_PSY|CODEC_FLAG2_MBTREE
+#else
+#define X264_DEFAULTS 0
+#endif
+#if FF_API_LAME_GLOBAL_OPTS
+#define LAME_DEFAULTS CODEC_FLAG2_BIT_RESERVOIR
+#else
+#define LAME_DEFAULTS 0
+#endif
+{"flags2", NULL, OFFSET(flags2), AV_OPT_TYPE_FLAGS, {.dbl = X264_DEFAULTS|LAME_DEFAULTS }, 0, UINT_MAX, V|A|E|D, "flags2"},
 {"error", NULL, OFFSET(error_rate), AV_OPT_TYPE_INT, {.dbl = DEFAULT }, INT_MIN, INT_MAX, V|E},
 #if FF_API_ANTIALIAS_ALGO
 {"antialias", "MP3 antialias algorithm", OFFSET(antialias_algo), AV_OPT_TYPE_INT, {.dbl = DEFAULT }, INT_MIN, INT_MAX, V|D, "aa"},
@@ -483,7 +492,7 @@ static const AVOption options[]={
 {"psy_trellis", "specify psycho visual trellis", OFFSET(psy_trellis), AV_OPT_TYPE_FLOAT, {.dbl = -1 }, -1, FLT_MAX, V|E},
 {"aq_mode", "specify aq method", OFFSET(aq_mode), AV_OPT_TYPE_INT, {.dbl = -1 }, -1, INT_MAX, V|E},
 {"aq_strength", "specify aq strength", OFFSET(aq_strength), AV_OPT_TYPE_FLOAT, {.dbl = -1.0 }, -1, FLT_MAX, V|E},
-{"rc_lookahead", "specify number of frames to look ahead for frametype", OFFSET(rc_lookahead), AV_OPT_TYPE_INT, {.dbl = 40 }, -1, INT_MAX, V|E},
+{"rc_lookahead", "specify number of frames to look ahead for frametype", OFFSET(rc_lookahead), AV_OPT_TYPE_INT, {.dbl = -1 }, -1, INT_MAX, V|E},
 {"ssim", "ssim will be calculated during encoding", 0, AV_OPT_TYPE_CONST, {.dbl = CODEC_FLAG2_SSIM }, INT_MIN, INT_MAX, V|E, "flags2"},
 {"intra_refresh", "use periodic insertion of intra blocks instead of keyframes", 0, AV_OPT_TYPE_CONST, {.dbl = CODEC_FLAG2_INTRA_REFRESH }, INT_MIN, INT_MAX, V|E, "flags2"},
 {"crf_max", "in crf mode, prevents vbv from lowering quality beyond this point", OFFSET(crf_max), AV_OPT_TYPE_FLOAT, {.dbl = DEFAULT }, 0, 51, V|E},
@@ -569,6 +578,7 @@ int avcodec_get_context_defaults3(AVCodecContext *s, AVCodec *codec){
     s->sample_aspect_ratio = (AVRational){0,1};
     s->pix_fmt             = PIX_FMT_NONE;
     s->sample_fmt          = AV_SAMPLE_FMT_NONE;
+    s->timecode_frame_start = -1;
 
     s->reget_buffer        = avcodec_default_reget_buffer;
     s->reordered_opaque    = AV_NOPTS_VALUE;
@@ -580,15 +590,15 @@ int avcodec_get_context_defaults3(AVCodecContext *s, AVCodec *codec){
             }
         }
         if(codec->priv_class){
-            *(AVClass**)s->priv_data= codec->priv_class;
+            *(const AVClass**)s->priv_data = codec->priv_class;
             av_opt_set_defaults(s->priv_data);
         }
     }
     if (codec && codec->defaults) {
         int ret;
-        AVCodecDefault *d = codec->defaults;
+        const AVCodecDefault *d = codec->defaults;
         while (d->key) {
-            ret = av_set_string3(s, d->key, d->value, 0, NULL);
+            ret = av_opt_set(s, d->key, d->value, 0);
             av_assert0(ret >= 0);
             d++;
         }
@@ -643,9 +653,9 @@ int avcodec_copy_context(AVCodecContext *dest, const AVCodecContext *src)
     dest->priv_data       = NULL;
     dest->codec           = NULL;
     dest->slice_offset    = NULL;
-    dest->internal_buffer = NULL;
     dest->hwaccel         = NULL;
     dest->thread_opaque   = NULL;
+    dest->internal        = NULL;
 
     /* reallocate values that should be allocated separately */
     dest->rc_eq           = NULL;

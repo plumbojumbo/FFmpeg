@@ -19,6 +19,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 #include "avformat.h"
+#include "internal.h"
 #include "riff.h"
 #include "asf.h"
 #include "avio_internal.h"
@@ -223,7 +224,7 @@ static const AVCodecTag codec_asf_bmp_tags[] = {
 
 #define PREROLL_TIME 3100
 
-static void put_guid(AVIOContext *s, const ff_asf_guid *g)
+void ff_put_guid(AVIOContext *s, const ff_asf_guid *g)
 {
     assert(sizeof(*g) == 16);
     avio_write(s, *g, sizeof(*g));
@@ -249,7 +250,7 @@ static int64_t put_header(AVIOContext *pb, const ff_asf_guid *g)
     int64_t pos;
 
     pos = avio_tell(pb);
-    put_guid(pb, g);
+    ff_put_guid(pb, g);
     avio_wl64(pb, 24);
     return pos;
 }
@@ -321,7 +322,7 @@ static int asf_write_header1(AVFormatContext *s, int64_t file_size, int64_t data
     for(n=0;n<s->nb_streams;n++) {
         enc = s->streams[n]->codec;
 
-        av_set_pts_info(s->streams[n], 32, 1, 1000); /* 32 bit pts in ms */
+        avpriv_set_pts_info(s->streams[n], 32, 1, 1000); /* 32 bit pts in ms */
 
         bit_rate += enc->bit_rate;
     }
@@ -330,7 +331,7 @@ static int asf_write_header1(AVFormatContext *s, int64_t file_size, int64_t data
         put_chunk(s, 0x4824, 0, 0xc00); /* start of stream (length will be patched later) */
     }
 
-    put_guid(pb, &ff_asf_header);
+    ff_put_guid(pb, &ff_asf_header);
     avio_wl64(pb, -1); /* header length, will be patched after */
     avio_wl32(pb, 3 + has_title + !!metadata_count + s->nb_streams); /* number of chunks in header */
     avio_w8(pb, 1); /* ??? */
@@ -339,7 +340,7 @@ static int asf_write_header1(AVFormatContext *s, int64_t file_size, int64_t data
     /* file header */
     header_offset = avio_tell(pb);
     hpos = put_header(pb, &ff_asf_file_header);
-    put_guid(pb, &ff_asf_my_guid);
+    ff_put_guid(pb, &ff_asf_my_guid);
     avio_wl64(pb, file_size);
     file_time = 0;
     avio_wl64(pb, unix_to_file_time(file_time));
@@ -355,7 +356,7 @@ static int asf_write_header1(AVFormatContext *s, int64_t file_size, int64_t data
 
     /* unknown headers */
     hpos = put_header(pb, &ff_asf_head1_guid);
-    put_guid(pb, &ff_asf_head2_guid);
+    ff_put_guid(pb, &ff_asf_head2_guid);
     avio_wl32(pb, 6);
     avio_wl16(pb, 0);
     end_header(pb, hpos);
@@ -418,11 +419,11 @@ static int asf_write_header1(AVFormatContext *s, int64_t file_size, int64_t data
 
         hpos = put_header(pb, &ff_asf_stream_header);
         if (enc->codec_type == AVMEDIA_TYPE_AUDIO) {
-            put_guid(pb, &ff_asf_audio_stream);
-            put_guid(pb, &ff_asf_audio_conceal_spread);
+            ff_put_guid(pb, &ff_asf_audio_stream);
+            ff_put_guid(pb, &ff_asf_audio_conceal_spread);
         } else {
-            put_guid(pb, &ff_asf_video_stream);
-            put_guid(pb, &ff_asf_video_conceal_none);
+            ff_put_guid(pb, &ff_asf_video_stream);
+            ff_put_guid(pb, &ff_asf_video_conceal_none);
         }
         avio_wl64(pb, 0); /* ??? */
         es_pos = avio_tell(pb);
@@ -469,7 +470,7 @@ static int asf_write_header1(AVFormatContext *s, int64_t file_size, int64_t data
     /* media comments */
 
     hpos = put_header(pb, &ff_asf_codec_comment_header);
-    put_guid(pb, &ff_asf_codec_comment1_header);
+    ff_put_guid(pb, &ff_asf_codec_comment1_header);
     avio_wl32(pb, s->nb_streams);
     for(n=0;n<s->nb_streams;n++) {
         AVCodec *p;
@@ -540,9 +541,9 @@ static int asf_write_header1(AVFormatContext *s, int64_t file_size, int64_t data
 
     /* movie chunk, followed by packets of packet_size */
     asf->data_offset = cur_pos;
-    put_guid(pb, &ff_asf_data_header);
+    ff_put_guid(pb, &ff_asf_data_header);
     avio_wl64(pb, data_chunk_size);
-    put_guid(pb, &ff_asf_my_guid);
+    ff_put_guid(pb, &ff_asf_my_guid);
     avio_wl64(pb, asf->nb_packets); /* nb packets */
     avio_w8(pb, 1); /* ??? */
     avio_w8(pb, 1); /* ??? */
@@ -832,9 +833,9 @@ static int asf_write_index(AVFormatContext *s, ASFIndex *index, uint16_t max, ui
     AVIOContext *pb = s->pb;
     int i;
 
-    put_guid(pb, &ff_asf_simple_index_header);
+    ff_put_guid(pb, &ff_asf_simple_index_header);
     avio_wl64(pb, 24 + 16 + 8 + 4 + 4 + (4 + 2)*count);
-    put_guid(pb, &ff_asf_my_guid);
+    ff_put_guid(pb, &ff_asf_my_guid);
     avio_wl64(pb, ASF_INDEXED_INTERVAL);
     avio_wl32(pb, max);
     avio_wl32(pb, count);
@@ -883,11 +884,7 @@ AVOutputFormat ff_asf_muxer = {
     .mime_type      = "video/x-ms-asf",
     .extensions     = "asf,wmv,wma",
     .priv_data_size = sizeof(ASFContext),
-#if CONFIG_LIBMP3LAME
-    .audio_codec    = CODEC_ID_MP3,
-#else
-    .audio_codec    = CODEC_ID_MP2,
-#endif
+    .audio_codec    = CODEC_ID_WMAV2,
     .video_codec    = CODEC_ID_MSMPEG4V3,
     .write_header   = asf_write_header,
     .write_packet   = asf_write_packet,
@@ -904,11 +901,7 @@ AVOutputFormat ff_asf_stream_muxer = {
     .mime_type      = "video/x-ms-asf",
     .extensions     = "asf,wmv,wma",
     .priv_data_size = sizeof(ASFContext),
-#if CONFIG_LIBMP3LAME
-    .audio_codec    = CODEC_ID_MP3,
-#else
     .audio_codec    = CODEC_ID_WMAV2,
-#endif
     .video_codec    = CODEC_ID_MSMPEG4V3,
     .write_header   = asf_write_stream_header,
     .write_packet   = asf_write_packet,

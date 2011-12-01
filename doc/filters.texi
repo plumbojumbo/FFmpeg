@@ -110,7 +110,7 @@ The filter accepts a string of the form:
 the corresponding numeric value defined in @file{libavutil/samplefmt.h}.
 
 @var{channel_layout} specifies the channel layout, and can be a string
-or the corresponding number value defined in @file{libavutil/chlayout.h}.
+or the corresponding number value defined in @file{libavutil/audioconvert.h}.
 
 @var{packing_format} specifies the type of packing in output, can be one
 of "planar" or "packed", or the corresponding numeric values "0" or "1".
@@ -198,7 +198,7 @@ seconds
 
 @item pos
 position of the frame in the input stream, -1 if this information in
-unavailable and/or meanigless (for example in case of synthetic audio)
+unavailable and/or meaningless (for example in case of synthetic audio)
 
 @item fmt
 sample format name
@@ -223,6 +223,115 @@ Adler-32 checksum (printed in hexadecimal) for each input frame plane,
 expressed in the form "[@var{c0} @var{c1} @var{c2} @var{c3} @var{c4} @var{c5}
 @var{c6} @var{c7}]"
 @end table
+
+@section earwax
+
+Make audio easier to listen to on headphones.
+
+This filter adds `cues' to 44.1kHz stereo (i.e. audio CD format) audio
+so that when listened to on headphones the stereo image is moved from
+inside your head (standard for headphones) to outside and in front of
+the listener (standard for speakers).
+
+Ported from SoX.
+
+@section pan
+
+Mix channels with specific gain levels. The filter accepts the output
+channel layout followed by a set of channels definitions.
+
+The filter accepts parameters of the form:
+"@var{l}:@var{outdef}:@var{outdef}:..."
+
+@table @option
+@item l
+output channel layout or number of channels
+
+@item outdef
+output channel specification, of the form:
+"@var{out_name}=[@var{gain}*]@var{in_name}[+[@var{gain}*]@var{in_name}...]"
+
+@item out_name
+output channel to define, either a channel name (FL, FR, etc.) or a channel
+number (c0, c1, etc.)
+
+@item gain
+multiplicative coefficient for the channel, 1 leaving the volume unchanged
+
+@item in_name
+input channel to use, see out_name for details; it is not possible to mix
+named and numbered input channels
+@end table
+
+If the `=' in a channel specification is replaced by `<', then the gains for
+that specification will be renormalized so that the total is 1, thus
+avoiding clipping noise.
+
+For example, if you want to down-mix from stereo to mono, but with a bigger
+factor for the left channel:
+@example
+pan=1:c0=0.9*c0+0.1*c1
+@end example
+
+A customized down-mix to stereo that works automatically for 3-, 4-, 5- and
+7-channels surround:
+@example
+pan=stereo: FL < FL + 0.5*FC + 0.6*BL + 0.6*SL : FR < FR + 0.5*FC + 0.6*BR + 0.6*SR
+@end example
+
+Note that @file{ffmpeg} integrates a default down-mix (and up-mix) system
+that should be preferred (see "-ac" option) unless you have very specific
+needs.
+
+@section volume
+
+Adjust the input audio volume.
+
+The filter accepts exactly one parameter @var{vol}, which expresses
+how the audio volume will be increased or decreased.
+
+Output values are clipped to the maximum value.
+
+If @var{vol} is expressed as a decimal number, and the output audio
+volume is given by the relation:
+@example
+@var{output_volume} = @var{vol} * @var{input_volume}
+@end example
+
+If @var{vol} is expressed as a decimal number followed by the string
+"dB", the value represents the requested change in decibels of the
+input audio power, and the output audio volume is given by the
+relation:
+@example
+@var{output_volume} = 10^(@var{vol}/20) * @var{input_volume}
+@end example
+
+Otherwise @var{vol} is considered an expression and its evaluated
+value is used for computing the output audio volume according to the
+first relation.
+
+Default value for @var{vol} is 1.0.
+
+@subsection Examples
+
+@itemize
+@item
+Half the input audio volume:
+@example
+volume=0.5
+@end example
+
+The above example is equivalent to:
+@example
+volume=1/2
+@end example
+
+@item
+Decrease input audio power by 12 decibels:
+@example
+volume=-12dB
+@end example
+@end itemize
 
 @c man end AUDIO FILTERS
 
@@ -330,7 +439,7 @@ aevalsrc=0
 
 @item
 
-Generate a sin signal with frequence of 440 Hz, set sample rate to
+Generate a sin signal with frequency of 440 Hz, set sample rate to
 8000 Hz:
 @example
 aevalsrc="sin(440*2*PI*t)::s=8000"
@@ -465,6 +574,22 @@ build.
 
 Below is a description of the currently available video filters.
 
+@section ass
+
+Draw ASS (Advanced Substation Alpha) subtitles on top of input video
+using the libass library.
+
+To enable compilation of this filter you need to configure FFmpeg with
+@code{--enable-libass}.
+
+This filter accepts in input the name of the ass file to render.
+
+For example, to render the file @file{sub.ass} on top of the input
+video, use the command:
+@example
+ass=sub.ass
+@end example
+
 @section blackframe
 
 Detect frames that are (almost) completely black. Can be useful to
@@ -503,7 +628,7 @@ input plane. They are expressions, and can contain the following
 constants:
 @table @option
 @item w, h
-the input width and heigth in pixels
+the input width and height in pixels
 
 @item cw, ch
 the input chroma image width and height in pixels
@@ -759,7 +884,7 @@ A description of the accepted parameters follows.
 @table @option
 
 @item x, y, w, h
-Specify a rectangular area where to limit the sarch for motion
+Specify a rectangular area where to limit the search for motion
 vectors.
 If desired the search for motion vectors can be limited to a
 rectangular area of the frame defined by its top left corner, width
@@ -964,7 +1089,7 @@ following constants:
 
 @table @option
 @item w, h
-the input width and heigth
+the input width and height
 
 @item tw, text_w
 the width of the rendered text
@@ -1078,7 +1203,7 @@ For more information about libfreetype, check:
 Apply fade-in/out effect to input video.
 
 It accepts the parameters:
-@var{type}:@var{start_frame}:@var{nb_frames}
+@var{type}:@var{start_frame}:@var{nb_frames}[:@var{options}]
 
 @var{type} specifies if the effect type, can be either "in" for
 fade-in, or "out" for a fade-out effect.
@@ -1090,6 +1215,25 @@ to apply the fade effect.
 effect has to last. At the end of the fade-in effect the output video
 will have the same intensity as the input video, at the end of the
 fade-out transition the output video will be completely black.
+
+@var{options} is an optional sequence of @var{key}=@var{value} pairs,
+separated by ":". The description of the accepted options follows.
+
+@table @option
+
+@item type, t
+See @var{type}.
+
+@item start_frame, s
+See @var{start_frame}.
+
+@item nb_frames, n
+See @var{nb_frames}.
+
+@item alpha
+If set to 1, fade only alpha channel, if one exists on the input.
+Default value is 0.
+@end table
 
 A few usage examples follow, usable too as test scenarios.
 @example
@@ -1104,6 +1248,9 @@ fade=in:0:25, fade=out:975:25
 
 # make first 5 frames black, then fade in from frame 5-24
 fade=in:5:20
+
+# fade in alpha over first 25 frames of video
+fade=in:0:25:alpha=1
 @end example
 
 @section fieldorder
@@ -1136,7 +1283,7 @@ which is bottom field first.
 
 For example:
 @example
-./ffmpeg -i in.vob -vf "fieldorder=bff" out.dv
+ffmpeg -i in.vob -vf "fieldorder=bff" out.dv
 @end example
 
 @section fifo
@@ -1220,7 +1367,7 @@ For more information see:
 @section gradfun
 
 Fix the banding artifacts that are sometimes introduced into nearly flat
-regions by truncation to 8bit colordepth.
+regions by truncation to 8bit color depth.
 Interpolate the gradients that should go where the bands are, and
 dither them.
 
@@ -1254,8 +1401,7 @@ gradfun=1.2
 
 Flip the input video horizontally.
 
-For example to horizontally flip the video in input with
-@file{ffmpeg}:
+For example to horizontally flip the input video with @command{ffmpeg}:
 @example
 ffmpeg -i in.avi -vf "hflip" out.avi
 @end example
@@ -1345,7 +1491,7 @@ The expressions can contain the following constants and functions:
 
 @table @option
 @item w, h
-the input width and heigth
+the input width and height
 
 @item val
 input value for the pixel component
@@ -1542,7 +1688,7 @@ The filter takes the parameters: @var{filter_name}@{:=@}@var{filter_params}.
 filter. If not specified the default values are assumed.
 
 Refer to the official libopencv documentation for more precise
-informations:
+information:
 @url{http://opencv.willowgarage.com/documentation/c/image_filtering.html}
 
 Follows the list of supported libopencv filters.
@@ -1558,7 +1704,7 @@ It accepts the parameters: @var{struct_el}:@var{nb_iterations}.
 @var{struct_el} represents a structuring element, and has the syntax:
 @var{cols}x@var{rows}+@var{anchor_x}x@var{anchor_y}/@var{shape}
 
-@var{cols} and @var{rows} represent the number of colums and rows of
+@var{cols} and @var{rows} represent the number of columns and rows of
 the structuring element, @var{anchor_x} and @var{anchor_y} the anchor
 point, and @var{shape} the shape for the structuring element, and
 can be one of the values "rect", "cross", "ellipse", "custom".
@@ -1631,10 +1777,10 @@ Overlay one video on top of another.
 It takes two inputs and one output, the first input is the "main"
 video on which the second input is overlayed.
 
-It accepts the parameters: @var{x}:@var{y}.
+It accepts the parameters: @var{x}:@var{y}[:@var{options}].
 
 @var{x} is the x coordinate of the overlayed video on the main video,
-@var{y} is the y coordinate. The parameters are expressions containing
+@var{y} is the y coordinate. @var{x} and @var{y} are expressions containing
 the following parameters:
 
 @table @option
@@ -1649,6 +1795,17 @@ overlay input width and height
 
 @item w, h
 same as @var{overlay_w} and @var{overlay_h}
+@end table
+
+@var{options} is an optional list of @var{key}=@var{value} pairs,
+separated by ":".
+
+The description of the accepted options follows.
+
+@table @option
+@item rgb
+If set to 1, force the filter to accept inputs in the RGB
+color space. Default value is 0.
 @end table
 
 Be aware that frames are taken from each input video in timestamp
@@ -1679,7 +1836,7 @@ movie=logo2.png [logo2];
 color=red@.3:WxH [over]; [in][over] overlay [out]
 @end example
 
-You can chain togheter more overlays but the efficiency of such
+You can chain together more overlays but the efficiency of such
 approach is yet to be tested.
 
 @section pad
@@ -1735,7 +1892,7 @@ value for @var{width} or @var{height} is 0, the corresponding input size
 is used for the output.
 
 The @var{width} expression can reference the value set by the
-@var{height} expression, and viceversa.
+@var{height} expression, and vice versa.
 
 The default value of @var{width} and @var{height} is 0.
 
@@ -1745,7 +1902,7 @@ Specify the offsets where to place the input image in the padded area
 with respect to the top/left border of the output image.
 
 The @var{x} expression can reference the value set by the @var{y}
-expression, and viceversa.
+expression, and vice versa.
 
 The default value of @var{x} and @var{y} is 0.
 
@@ -2160,7 +2317,7 @@ seconds
 
 @item pos
 position of the frame in the input stream, -1 if this information in
-unavailable and/or meanigless (for example in case of synthetic video)
+unavailable and/or meaningless (for example in case of synthetic video)
 
 @item fmt
 pixel format name
@@ -2201,7 +2358,7 @@ Pass the images of input video on to next video filter as multiple
 slices.
 
 @example
-./ffmpeg -i in.avi -vf "slicify=32" out.avi
+ffmpeg -i in.avi -vf "slicify=32" out.avi
 @end example
 
 The filter accepts the slice height as parameter. If the parameter is
@@ -2313,7 +2470,7 @@ unsharp=7:7:2.5
 unsharp=7:7:-2:7:7:-2
 
 # Use the default values with @command{ffmpeg}
-./ffmpeg -i in.avi -vf "unsharp" out.mp4
+ffmpeg -i in.avi -vf "unsharp" out.mp4
 @end example
 
 @section vflip
@@ -2321,7 +2478,7 @@ unsharp=7:7:-2:7:7:-2
 Flip the input video vertically.
 
 @example
-./ffmpeg -i in.avi -vf "vflip" out.avi
+ffmpeg -i in.avi -vf "vflip" out.avi
 @end example
 
 @section yadif
@@ -2392,7 +2549,7 @@ through the interface defined in @file{libavfilter/vsrc_buffer.h}.
 It accepts the following parameters:
 @var{width}:@var{height}:@var{pix_fmt_string}:@var{timebase_num}:@var{timebase_den}:@var{sample_aspect_ratio_num}:@var{sample_aspect_ratio.den}:@var{scale_params}
 
-All the parameters but @var{scale_params} need to be explicitely
+All the parameters but @var{scale_params} need to be explicitly
 defined.
 
 Follows the list of the accepted parameters.
@@ -2609,7 +2766,7 @@ section @ref{frei0r} in the description of the video filters.
 
 Some examples follow:
 @example
-# generate a frei0r partik0l source with size 200x200 and framerate 10
+# generate a frei0r partik0l source with size 200x200 and frame rate 10
 # which is overlayed on the overlay filter main input
 frei0r_src=200x200:10:partik0l=1234 [overlay]; [in][overlay] overlay
 @end example
@@ -2635,7 +2792,7 @@ separated by ":". The description of the accepted options follows.
 
 @item size, s
 Specify the size of the sourced video, it may be a string of the form
-@var{width}x@var{heigth}, or the name of a size abbreviation. The
+@var{width}x@var{height}, or the name of a size abbreviation. The
 default value is "320x240".
 
 @item rate, r
@@ -2666,7 +2823,7 @@ testsrc=duration=5.3:size=qcif:rate=10
 @end example
 
 will generate a video with a duration of 5.3 seconds, with size
-176x144 and a framerate of 10 frames per second.
+176x144 and a frame rate of 10 frames per second.
 
 If the input content is to be ignored, @code{nullsrc} can be used. The
 following command generates noise in the luminance plane by employing

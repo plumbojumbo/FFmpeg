@@ -41,6 +41,7 @@
  */
 
 #include "avformat.h"
+#include "internal.h"
 #include "libavutil/intreadwrite.h"
 #include "libavutil/des.h"
 #include "pcm.h"
@@ -345,7 +346,7 @@ static int oma_read_header(AVFormatContext *s,
             AV_WL16(&edata[10], 1);             // always 1
             // AV_WL16(&edata[12], 0);          // always 0
 
-            av_set_pts_info(st, 64, 1, st->codec->sample_rate);
+            avpriv_set_pts_info(st, 64, 1, st->codec->sample_rate);
             break;
         case OMA_CODECID_ATRAC3P:
             st->codec->channels = (codec_params >> 10) & 7;
@@ -353,7 +354,7 @@ static int oma_read_header(AVFormatContext *s,
             st->codec->sample_rate = srate_tab[(codec_params >> 13) & 7]*100;
             st->codec->bit_rate    = st->codec->sample_rate * framesize * 8 / 1024;
             st->codec->block_align = framesize;
-            av_set_pts_info(st, 64, 1, st->codec->sample_rate);
+            avpriv_set_pts_info(st, 64, 1, st->codec->sample_rate);
             av_log(s, AV_LOG_ERROR, "Unsupported codec ATRAC3+!\n");
             break;
         case OMA_CODECID_MP3:

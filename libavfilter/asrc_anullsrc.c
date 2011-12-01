@@ -30,7 +30,7 @@
 typedef struct {
     const AVClass *class;
     char   *channel_layout_str;
-    int64_t channel_layout;
+    uint64_t channel_layout;
     char   *sample_rate_str;
     int     sample_rate;
     int nb_samples;             ///< number of samples per requested frame
@@ -128,9 +128,9 @@ AVFilter avfilter_asrc_anullsrc = {
     .init        = init,
     .priv_size   = sizeof(ANullContext),
 
-    .inputs      = (AVFilterPad[]) {{ .name = NULL}},
+    .inputs      = (const AVFilterPad[]) {{ .name = NULL}},
 
-    .outputs     = (AVFilterPad[]) {{ .name = "default",
+    .outputs     = (const AVFilterPad[]) {{ .name = "default",
                                       .type = AVMEDIA_TYPE_AUDIO,
                                       .config_props = config_props,
                                       .request_frame = request_frame, },

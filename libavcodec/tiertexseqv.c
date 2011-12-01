@@ -178,7 +178,7 @@ static int seqvideo_decode(SeqVideoContext *seq, const unsigned char *data, int 
         for (i = 0; i < 256; i++) {
             for (j = 0; j < 3; j++, data++)
                 c[j] = (*data << 2) | (*data >> 4);
-            palette[i] = AV_RB24(c);
+            palette[i] = 0xFF << 24 | AV_RB24(c);
         }
         seq->frame.palette_has_changed = 1;
     }
@@ -231,7 +231,7 @@ static int seqvideo_decode_frame(AVCodecContext *avctx,
 
     SeqVideoContext *seq = avctx->priv_data;
 
-    seq->frame.reference = 1;
+    seq->frame.reference = 3;
     seq->frame.buffer_hints = FF_BUFFER_HINTS_VALID | FF_BUFFER_HINTS_PRESERVE | FF_BUFFER_HINTS_REUSABLE;
     if (avctx->reget_buffer(avctx, &seq->frame)) {
         av_log(seq->avctx, AV_LOG_ERROR, "tiertexseqvideo: reget_buffer() failed\n");

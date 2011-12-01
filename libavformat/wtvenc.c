@@ -19,11 +19,18 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+/**
+ * @file
+ * Windows Television (WTV) demuxer
+ * @author Zhentan Feng <spyfeng at gmail dot com>
+ */
+
 #include "libavutil/intreadwrite.h"
 #include "libavutil/avassert.h"
 #include "avformat.h"
 #include "internal.h"
 #include "wtv.h"
+#include "asf.h"
 
 #define WTV_BIGSECTOR_SIZE (1 << WTV_BIGSECTOR_BITS)
 #define INDEX_BASE 0x2
@@ -97,7 +104,7 @@ typedef struct {
     const uint8_t *header;
     int header_size;
     WTVHeaderWriteFunc *write_header;
-}WTVRootEntryTable;
+} WTVRootEntryTable;
 
 static int write_pad(AVIOContext *pb, int size)
 {
@@ -105,12 +112,6 @@ static int write_pad(AVIOContext *pb, int size)
         avio_w8(pb, 0);
     return 0;
 }
-
-static void put_guid(AVIOContext *s, const ff_asf_guid *g)
-{
-    assert(sizeof(*g) == 16);
-    avio_write(s, *g, sizeof(*g));
- }
 
 static const ff_asf_guid *get_codec_guid(enum CodecID id, const AVCodecGuid *av_guid)
 {
@@ -131,7 +132,7 @@ static void write_chunk_header(AVFormatContext *s, const ff_asf_guid *guid, int 
     AVIOContext *pb = s->pb;
 
     wctx->last_chunk_pos = avio_tell(pb) - wctx->timeline_start_pos;
-    put_guid(pb, guid);
+    ff_put_guid(pb, guid);
     avio_wl32(pb, 32 + length);
     avio_wl32(pb, stream_id);
     avio_wl64(pb, wctx->serial);
@@ -184,7 +185,7 @@ static void write_index(AVFormatContext *s)
 
     for (i = 0; i < wctx->nb_index; i++) {
         WtvChunkEntry *t = wctx->index + i;
-        put_guid(pb,  t->guid);
+        ff_put_guid(pb,  t->guid);
         avio_wl64(pb, t->pos);
         avio_wl32(pb, t->stream_id);
         avio_wl32(pb, 0); // checksum?
@@ -218,7 +219,7 @@ static int write_stream_codec_info(AVFormatContext *s, AVStream *st)
         g = get_codec_guid(st->codec->codec_id, ff_codec_wav_guids);
         media_type = &ff_mediatype_audio;
         format_type = &ff_format_waveformatex;
-    }  else {
+    } else {
         av_log(s, AV_LOG_ERROR, "unknown codec_type (0x%x)\n", st->codec->codec_type);
         return -1;
     }
@@ -228,10 +229,10 @@ static int write_stream_codec_info(AVFormatContext *s, AVStream *st)
         return -1;
     }
 
-    put_guid(pb, media_type); // mediatype
-    put_guid(pb, &ff_mediasubtype_cpfilters_processed); // subtype
+    ff_put_guid(pb, media_type); // mediatype
+    ff_put_guid(pb, &ff_mediasubtype_cpfilters_processed); // subtype
     write_pad(pb, 12);
-    put_guid(pb,&ff_format_cpfilters_processed); // format type
+    ff_put_guid(pb,&ff_format_cpfilters_processed); // format type
     avio_wl32(pb, 0); // size
 
     hdr_pos_start = avio_tell(pb);
@@ -252,8 +253,8 @@ static int write_stream_codec_info(AVFormatContext *s, AVStream *st)
     avio_seek(pb, -(hdr_size + 4), SEEK_CUR);
     avio_wl32(pb, hdr_size + 32);
     avio_seek(pb, hdr_size, SEEK_CUR);
-    put_guid(pb, g);           // actual_subtype
-    put_guid(pb, format_type); // actual_formattype
+    ff_put_guid(pb, g);           // actual_subtype
+    ff_put_guid(pb, format_type); // actual_formattype
 
     return 0;
 }
@@ -283,7 +284,7 @@ static void write_sync(AVFormatContext *s)
     AVIOContext *pb = s->pb;
     WtvContext *wctx = s->priv_data;
     int64_t last_chunk_pos = wctx->last_chunk_pos;
-    wctx->sync_pos = avio_tell(pb) - wctx->timeline_start_pos;;
+    wctx->sync_pos = avio_tell(pb) - wctx->timeline_start_pos;
 
     write_chunk_header(s, &sync_guid, 0x18, 0);
     write_pad(pb, 24);
@@ -338,8 +339,8 @@ static int write_header(AVFormatContext *s)
     int i, pad, ret;
     AVStream *st;
 
-    put_guid(pb, &ff_wtv_guid);
-    put_guid(pb, &sub_wtv_guid);
+    ff_put_guid(pb, &ff_wtv_guid);
+    ff_put_guid(pb, &sub_wtv_guid);
 
     avio_wl32(pb, 0x01);
     avio_wl32(pb, 0x02);
@@ -492,7 +493,7 @@ static int write_root_table(AVFormatContext *s, int64_t sector_pos)
         int len = 0;
         int64_t len_pos;
 
-        put_guid(pb, &ff_dir_entry_guid);
+        ff_put_guid(pb, &ff_dir_entry_guid);
         len_pos = avio_tell(pb);
         avio_wl16(pb, 40 + h->header_size + filename_padding + 8); // maybe updated later
         write_pad(pb, 6);
@@ -531,7 +532,7 @@ static void write_fat(AVIOContext *pb, int start_sector, int nb_sectors, int shi
         avio_wl32(pb, start_sector + (i << shift));
     }
     // pad left sector pointer size
-    write_pad(pb, WTV_SECTOR_SIZE - (nb_sectors << 2));
+    write_pad(pb, WTV_SECTOR_SIZE - ((nb_sectors << 2) % WTV_SECTOR_SIZE));
 }
 
 static int write_fat_sector(AVFormatContext *s, int64_t start_pos, int nb_sectors, int sector_bits, int depth)
@@ -566,7 +567,7 @@ static void write_table_entries_events(AVFormatContext *s)
 
 static void write_tag(AVIOContext *pb, const char *key, const char *value)
 {
-    put_guid(pb, &ff_metadata_guid);
+    ff_put_guid(pb, &ff_metadata_guid);
     avio_wl32(pb, 1);
     avio_wl32(pb, strlen(value)*2 + 2);
     avio_put_str16le(pb, key);
@@ -579,7 +580,7 @@ static void write_table_entries_attrib(AVFormatContext *s)
 
     //FIXME: translate special tags (e.g. WM/Bitrate) to binary representation
     ff_metadata_conv(&s->metadata, ff_asf_metadata_conv, NULL);
-    while((tag = av_dict_get(s->metadata, "", tag, AV_DICT_IGNORE_SUFFIX)))
+    while ((tag = av_dict_get(s->metadata, "", tag, AV_DICT_IGNORE_SUFFIX)))
         write_tag(s->pb, tag->key, tag->value);
 }
 
@@ -590,7 +591,7 @@ static void write_table_redirector_legacy_attrib(AVFormatContext *s)
     int64_t pos = 0;
 
     //FIXME: translate special tags to binary representation
-    while((tag = av_dict_get(s->metadata, "", tag, AV_DICT_IGNORE_SUFFIX))) {
+    while ((tag = av_dict_get(s->metadata, "", tag, AV_DICT_IGNORE_SUFFIX))) {
         avio_wl64(pb, pos);
         pos += 16 + 4 + 4 + strlen(tag->key)*2 + 2 + strlen(tag->value)*2 + 2;
     }
@@ -712,7 +713,7 @@ AVOutputFormat ff_wtv_muxer = {
     .long_name      = NULL_IF_CONFIG_SMALL("Windows Television (WTV)"),
     .extensions     = "wtv",
     .priv_data_size = sizeof(WtvContext),
-    .audio_codec    = CODEC_ID_MP2,
+    .audio_codec    = CODEC_ID_AC3,
     .video_codec    = CODEC_ID_MPEG2VIDEO,
     .write_header   = write_header,
     .write_packet   = write_packet,

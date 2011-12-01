@@ -30,7 +30,7 @@
 #include "libavutil/pixdesc.h"
 #include "avfilter.h"
 
-static const char *var_names[] = {
+static const char * const var_names[] = {
     "w",
     "h",
     "cw",
@@ -325,7 +325,7 @@ static void end_frame(AVFilterLink *inlink)
               boxblur->temp);
 
     avfilter_draw_slice(outlink, 0, inlink->h, 1);
-    avfilter_end_frame(outlink);
+    avfilter_default_end_frame(inlink);
 }
 
 AVFilter avfilter_vf_boxblur = {
@@ -336,14 +336,14 @@ AVFilter avfilter_vf_boxblur = {
     .uninit        = uninit,
     .query_formats = query_formats,
 
-    .inputs    = (AVFilterPad[]) {{ .name             = "default",
+    .inputs    = (const AVFilterPad[]) {{ .name       = "default",
                                     .type             = AVMEDIA_TYPE_VIDEO,
                                     .config_props     = config_input,
                                     .draw_slice       = null_draw_slice,
                                     .end_frame        = end_frame,
                                     .min_perms        = AV_PERM_READ },
                                   { .name = NULL}},
-    .outputs   = (AVFilterPad[]) {{ .name             = "default",
+    .outputs   = (const AVFilterPad[]) {{ .name       = "default",
                                     .type             = AVMEDIA_TYPE_VIDEO, },
                                   { .name = NULL}},
 };

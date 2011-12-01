@@ -28,6 +28,7 @@
 #include "libavutil/mathematics.h"
 #include "libavcodec/mpegaudio.h"
 #include "avformat.h"
+#include "internal.h"
 #include "avio_internal.h"
 #include "riff.h"
 #include "asf.h"
@@ -166,7 +167,7 @@ static void get_tag(AVFormatContext *s, const char *key, int type, int len)
     if (type == 0) {         // UTF16-LE
         avio_get_str16le(s->pb, len, value, 2*len + 1);
     } else if (type == -1) { // ASCII
-        get_buffer(s->pb, value, len);
+        avio_read(s->pb, value, len);
         value[len]=0;
     } else if (type > 1 && type <= 5) {  // boolean or DWORD or QWORD or WORD
         uint64_t num = get_value(s->pb, type);
@@ -227,7 +228,7 @@ static int asf_read_stream_properties(AVFormatContext *s, int64_t size)
     st = avformat_new_stream(s, NULL);
     if (!st)
         return AVERROR(ENOMEM);
-    av_set_pts_info(st, 32, 1, 1000); /* 32 bit pts in ms */
+    avpriv_set_pts_info(st, 32, 1, 1000); /* 32 bit pts in ms */
     asf_st = av_mallocz(sizeof(ASFStream));
     if (!asf_st)
         return AVERROR(ENOMEM);
@@ -358,7 +359,7 @@ static int asf_read_stream_properties(AVFormatContext *s, int64_t size)
 
         /* Extract palette from extradata if bpp <= 8 */
         /* This code assumes that extradata contains only palette */
-        /* This is true for all paletted codecs implemented in ffmpeg */
+        /* This is true for all paletted codecs implemented in libavcodec */
         if (st->codec->extradata_size && (st->codec->bits_per_coded_sample <= 8)) {
             int av_unused i;
 #if HAVE_BIGENDIAN
@@ -812,7 +813,7 @@ static int asf_read_frame_header(AVFormatContext *s, AVIOContext *pb){
     ASFContext *asf = s->priv_data;
     int rsize = 1;
     int num = avio_r8(pb);
-    int64_t ts0;
+    int64_t ts0, ts1 av_unused;
 
     asf->packet_segments--;
     asf->packet_key_frame = num >> 7;
@@ -822,6 +823,10 @@ static int asf_read_frame_header(AVFormatContext *s, AVIOContext *pb){
     DO_2BITS(asf->packet_property >> 2, asf->packet_frag_offset, 0);
     DO_2BITS(asf->packet_property, asf->packet_replic_size, 0);
 //printf("key:%d stream:%d seq:%d offset:%d replic_size:%d\n", asf->packet_key_frame, asf->stream_index, asf->packet_seq, //asf->packet_frag_offset, asf->packet_replic_size);
+    if (rsize+asf->packet_replic_size > asf->packet_size_left) {
+        av_log(s, AV_LOG_ERROR, "packet_replic_size %d is invalid\n", asf->packet_replic_size);
+        return -1;
+    }
     if (asf->packet_replic_size >= 8) {
         asf->packet_obj_size = avio_rl32(pb);
         if(asf->packet_obj_size >= (1<<24) || asf->packet_obj_size <= 0){
@@ -835,7 +840,7 @@ static int asf_read_frame_header(AVFormatContext *s, AVIOContext *pb){
 //            av_log(s, AV_LOG_DEBUG, "\n");
             avio_skip(pb, 10);
             ts0= avio_rl64(pb);
-            avio_skip(pb, 8);;
+            ts1= avio_rl64(pb);
             avio_skip(pb, 12);
             avio_rl32(pb);
             avio_skip(pb, asf->packet_replic_size - 8 - 38 - 4);
@@ -854,10 +859,6 @@ static int asf_read_frame_header(AVFormatContext *s, AVIOContext *pb){
         rsize++;
     }else if(asf->packet_replic_size!=0){
         av_log(s, AV_LOG_ERROR, "unexpected packet_replic_size of %d\n", asf->packet_replic_size);
-        return -1;
-    }
-    if (rsize > asf->packet_size_left) {
-        av_log(s, AV_LOG_ERROR, "packet_replic_size is invalid\n");
         return -1;
     }
     if (asf->packet_flags & 0x01) {
@@ -1181,7 +1182,7 @@ static int64_t asf_read_pts(AVFormatContext *s, int stream_index, int64_t *ppos,
             return AV_NOPTS_VALUE;
         }
 
-        pts= pkt->pts;
+        pts= pkt->dts;
 
         av_free_packet(pkt);
         if(pkt->flags&AV_PKT_FLAG_KEY){

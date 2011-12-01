@@ -26,6 +26,7 @@
  */
 
 #include "libavutil/imgutils.h"
+#include "libavutil/opt.h"
 #include "internal.h"
 #include "dsputil.h"
 #include "avcodec.h"
@@ -56,6 +57,7 @@ static const uint8_t div6[QP_MAX_NUM+1]={
 static const enum PixelFormat hwaccel_pixfmt_list_h264_jpeg_420[] = {
     PIX_FMT_DXVA2_VLD,
     PIX_FMT_VAAPI_VLD,
+    PIX_FMT_VDA_VLD,
     PIX_FMT_YUVJ420P,
     PIX_FMT_NONE
 };
@@ -1126,6 +1128,7 @@ int ff_h264_decode_extradata(H264Context *h, const uint8_t *buf, int size)
 av_cold int ff_h264_decode_init(AVCodecContext *avctx){
     H264Context *h= avctx->priv_data;
     MpegEncContext * const s = &h->s;
+    int i;
 
     MPV_decode_defaults(s);
 
@@ -1150,6 +1153,8 @@ av_cold int ff_h264_decode_init(AVCodecContext *avctx){
 
     h->thread_context[0] = h;
     h->outputed_poc = h->next_outputed_poc = INT_MIN;
+    for (i = 0; i < MAX_DELAYED_PIC_COUNT; i++)
+        h->last_pocs[i] = INT_MIN;
     h->prev_poc_msb= 1<<16;
     h->x264_build = -1;
     ff_h264_reset_sei(h);
@@ -1200,7 +1205,8 @@ static void copy_parameter_set(void **to, void **from, int count, int size)
 static int decode_init_thread_copy(AVCodecContext *avctx){
     H264Context *h= avctx->priv_data;
 
-    if (!avctx->is_copy) return 0;
+    if (!avctx->internal->is_copy)
+        return 0;
     memset(h->sps_buffers, 0, sizeof(h->sps_buffers));
     memset(h->pps_buffers, 0, sizeof(h->pps_buffers));
 
@@ -1469,6 +1475,25 @@ static void decode_postinit(H264Context *h, int setup_finished){
         s->low_delay= 0;
     }
 
+    for (i = 0; 1; i++) {
+        if(i == MAX_DELAYED_PIC_COUNT || cur->poc < h->last_pocs[i]){
+            if(i)
+                h->last_pocs[i-1] = cur->poc;
+            break;
+        } else if(i) {
+            h->last_pocs[i-1]= h->last_pocs[i];
+        }
+    }
+    out_of_order = MAX_DELAYED_PIC_COUNT - i;
+    if(   cur->f.pict_type == AV_PICTURE_TYPE_B
+       || (h->last_pocs[MAX_DELAYED_PIC_COUNT-2] > INT_MIN && h->last_pocs[MAX_DELAYED_PIC_COUNT-1] - h->last_pocs[MAX_DELAYED_PIC_COUNT-2] > 2))
+        out_of_order = FFMAX(out_of_order, 1);
+    if(s->avctx->has_b_frames < out_of_order && !h->sps.bitstream_restriction_flag){
+        av_log(s->avctx, AV_LOG_WARNING, "Increasing reorder buffer to %d\n", out_of_order);
+        s->avctx->has_b_frames = out_of_order;
+        s->low_delay = 0;
+    }
+
     pics = 0;
     while(h->delayed_pic[pics]) pics++;
 
@@ -1488,17 +1513,6 @@ static void decode_postinit(H264Context *h, int setup_finished){
     if (s->avctx->has_b_frames == 0 && (h->delayed_pic[0]->f.key_frame || h->delayed_pic[0]->mmco_reset))
         h->next_outputed_poc= INT_MIN;
     out_of_order = out->poc < h->next_outputed_poc;
-
-    if(h->sps.bitstream_restriction_flag && s->avctx->has_b_frames >= h->sps.num_reorder_frames)
-        { }
-    else if((out_of_order && pics-1 == s->avctx->has_b_frames && s->avctx->has_b_frames < MAX_DELAYED_PIC_COUNT)
-       || (s->low_delay &&
-        ((h->next_outputed_poc != INT_MIN && out->poc > h->next_outputed_poc + 2)
-         || cur->f.pict_type == AV_PICTURE_TYPE_B)))
-    {
-        s->low_delay = 0;
-        s->avctx->has_b_frames++;
-    }
 
     if(out_of_order || pics > s->avctx->has_b_frames){
         out->f.reference &= ~DELAYED_PIC_REF;
@@ -2352,11 +2366,14 @@ static void implicit_weight_table(H264Context *h, int field){
  * instantaneous decoder refresh.
  */
 static void idr(H264Context *h){
+    int i;
     ff_h264_remove_all_refs(h);
-    h->prev_frame_num= 0;
+    h->prev_frame_num= -1;
     h->prev_frame_num_offset= 0;
     h->prev_poc_msb=
     h->prev_poc_lsb= 0;
+    for (i = 0; i < MAX_DELAYED_PIC_COUNT; i++)
+        h->last_pocs[i] = INT_MIN;
 }
 
 /* forget old pics after a seek */
@@ -2698,14 +2715,11 @@ static int decode_slice_header(H264Context *h, H264Context *h0){
 
     s->chroma_y_shift = h->sps.chroma_format_idc <= 1; // 400 uses yuv420p
 
-    s->width = 16*s->mb_width - (2>>CHROMA444)*FFMIN(h->sps.crop_right, (8<<CHROMA444)-1);
-    if(h->sps.frame_mbs_only_flag)
-        s->height= 16*s->mb_height - (1<<s->chroma_y_shift)*FFMIN(h->sps.crop_bottom, (16>>s->chroma_y_shift)-1);
-    else
-        s->height= 16*s->mb_height - (2<<s->chroma_y_shift)*FFMIN(h->sps.crop_bottom, (16>>s->chroma_y_shift)-1);
+    s->width = 16*s->mb_width;
+    s->height= 16*s->mb_height;
 
     if (s->context_initialized
-        && (   s->width != s->avctx->width || s->height != s->avctx->height
+        && (   s->width != s->avctx->coded_width || s->height != s->avctx->coded_height
             || s->avctx->bits_per_raw_sample != h->sps.bit_depth_luma
             || h->cur_chroma_format_idc != h->sps.chroma_format_idc
             || av_cmp_q(h->sps.sar, s->avctx->sample_aspect_ratio))) {
@@ -2723,8 +2737,9 @@ static int decode_slice_header(H264Context *h, H264Context *h0){
             av_log(h->s.avctx, AV_LOG_ERROR, "Cannot (re-)initialize context during parallel decoding.\n");
             return -1;
         }
-
         avcodec_set_dimensions(s->avctx, s->width, s->height);
+        s->avctx->width  -= (2>>CHROMA444)*FFMIN(h->sps.crop_right, (8<<CHROMA444)-1);
+        s->avctx->height -= (1<<s->chroma_y_shift)*FFMIN(h->sps.crop_bottom, (16>>s->chroma_y_shift)-1) * (2 - h->sps.frame_mbs_only_flag);
         s->avctx->sample_aspect_ratio= h->sps.sar;
         av_assert0(s->avctx->sample_aspect_ratio.den);
 
@@ -2766,17 +2781,23 @@ static int decode_slice_header(H264Context *h, H264Context *h0){
 
         switch (h->sps.bit_depth_luma) {
             case 9 :
-                if (CHROMA444)
-                    s->avctx->pix_fmt = PIX_FMT_YUV444P9;
-                else if (CHROMA422)
+                if (CHROMA444) {
+                    if (s->avctx->colorspace == AVCOL_SPC_RGB) {
+                        s->avctx->pix_fmt = PIX_FMT_GBRP9;
+                    } else
+                        s->avctx->pix_fmt = PIX_FMT_YUV444P9;
+                } else if (CHROMA422)
                     s->avctx->pix_fmt = PIX_FMT_YUV422P9;
                 else
                     s->avctx->pix_fmt = PIX_FMT_YUV420P9;
                 break;
             case 10 :
-                if (CHROMA444)
-                    s->avctx->pix_fmt = PIX_FMT_YUV444P10;
-                else if (CHROMA422)
+                if (CHROMA444) {
+                    if (s->avctx->colorspace == AVCOL_SPC_RGB) {
+                        s->avctx->pix_fmt = PIX_FMT_GBRP10;
+                    } else
+                        s->avctx->pix_fmt = PIX_FMT_YUV444P10;
+                } else if (CHROMA422)
                     s->avctx->pix_fmt = PIX_FMT_YUV422P10;
                 else
                     s->avctx->pix_fmt = PIX_FMT_YUV420P10;
@@ -2832,6 +2853,7 @@ static int decode_slice_header(H264Context *h, H264Context *h0){
                 c->sps = h->sps;
                 c->pps = h->pps;
                 c->pixel_shift = h->pixel_shift;
+                c->cur_chroma_format_idc = h->cur_chroma_format_idc;
                 init_scan_tables(c);
                 clone_tables(c, h, i);
             }
@@ -2867,7 +2889,7 @@ static int decode_slice_header(H264Context *h, H264Context *h0){
 
     if(h0->current_slice == 0){
         // Shorten frame num gaps so we don't have to allocate reference frames just to throw them away
-        if(h->frame_num != h->prev_frame_num) {
+        if(h->frame_num != h->prev_frame_num && h->prev_frame_num >= 0) {
             int unwrap_prev_frame_num = h->prev_frame_num, max_frame_num = 1<<h->sps.log2_max_frame_num;
 
             if (unwrap_prev_frame_num > h->frame_num) unwrap_prev_frame_num -= max_frame_num;
@@ -2881,7 +2903,7 @@ static int decode_slice_header(H264Context *h, H264Context *h0){
             }
         }
 
-        while(h->frame_num !=  h->prev_frame_num &&
+        while(h->frame_num !=  h->prev_frame_num && h->prev_frame_num >= 0 &&
               h->frame_num != (h->prev_frame_num+1)%(1<<h->sps.log2_max_frame_num)){
             Picture *prev = h->short_ref_count ? h->short_ref[0] : NULL;
             av_log(h->s.avctx, AV_LOG_DEBUG, "Frame num gap %d %d\n", h->frame_num, h->prev_frame_num);
@@ -2929,11 +2951,9 @@ static int decode_slice_header(H264Context *h, H264Context *h0){
                 s0->first_field = FIELD_PICTURE;
 
             } else {
-                if (h->nal_ref_idc &&
-                        s0->current_picture_ptr->f.reference &&
-                        s0->current_picture_ptr->frame_num != h->frame_num) {
+                if (s0->current_picture_ptr->frame_num != h->frame_num) {
                     /*
-                     * This and previous field were reference, but had
+                     * This and previous field had
                      * different frame_nums. Consider this field first in
                      * pair. Throw away previous field except for reference
                      * purposes.
@@ -4230,6 +4250,26 @@ static const AVProfile profiles[] = {
     { FF_PROFILE_UNKNOWN },
 };
 
+static const AVOption h264_options[] = {
+    {"is_avc", "is avc", offsetof(H264Context, is_avc), FF_OPT_TYPE_INT, {.dbl = 0}, 0, 1, 0},
+    {"nal_length_size", "nal_length_size", offsetof(H264Context, nal_length_size), FF_OPT_TYPE_INT, {.dbl = 0}, 0, 4, 0},
+    {NULL}
+};
+
+static const AVClass h264_class = {
+    "H264 Decoder",
+    av_default_item_name,
+    h264_options,
+    LIBAVUTIL_VERSION_INT,
+};
+
+static const AVClass h264_vdpau_class = {
+    "H264 VDPAU Decoder",
+    av_default_item_name,
+    h264_options,
+    LIBAVUTIL_VERSION_INT,
+};
+
 AVCodec ff_h264_decoder = {
     .name           = "h264",
     .type           = AVMEDIA_TYPE_VIDEO,
@@ -4245,6 +4285,7 @@ AVCodec ff_h264_decoder = {
     .init_thread_copy      = ONLY_IF_THREADS_ENABLED(decode_init_thread_copy),
     .update_thread_context = ONLY_IF_THREADS_ENABLED(decode_update_thread_context),
     .profiles = NULL_IF_CONFIG_SMALL(profiles),
+    .priv_class     = &h264_class,
 };
 
 #if CONFIG_H264_VDPAU_DECODER
@@ -4261,5 +4302,6 @@ AVCodec ff_h264_vdpau_decoder = {
     .long_name = NULL_IF_CONFIG_SMALL("H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10 (VDPAU acceleration)"),
     .pix_fmts = (const enum PixelFormat[]){PIX_FMT_VDPAU_H264, PIX_FMT_NONE},
     .profiles = NULL_IF_CONFIG_SMALL(profiles),
+    .priv_class     = &h264_vdpau_class,
 };
 #endif

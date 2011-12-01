@@ -29,7 +29,6 @@
 #include "avformat.h"
 #include "avio_internal.h"
 #include "internal.h"
-#include <strings.h>
 
 typedef struct {
     const AVClass *class;  /**< Class for private options. */
@@ -44,6 +43,7 @@ typedef struct {
     char *video_size;       /**< Set by a private option. */
     char *framerate;        /**< Set by a private option. */
     int loop;
+    int updatefirst;
 } VideoData;
 
 typedef struct {
@@ -125,7 +125,7 @@ static enum CodecID av_str2id(const IdStrMap *tags, const char *str)
     str++;
 
     while (tags->id) {
-        if (!strcasecmp(str, tags->str))
+        if (!av_strcasecmp(str, tags->str))
             return tags->id;
 
         tags++;
@@ -255,7 +255,7 @@ static int read_header(AVFormatContext *s1, AVFormatParameters *ap)
         st->need_parsing = AVSTREAM_PARSE_FULL;
     }
 
-    av_set_pts_info(st, 60, framerate.den, framerate.num);
+    avpriv_set_pts_info(st, 60, framerate.den, framerate.num);
 
     if (width && height) {
         st->codec->width  = width;
@@ -281,7 +281,7 @@ static int read_header(AVFormatContext *s1, AVFormatParameters *ap)
         st->codec->codec_id = s1->audio_codec_id;
     }else{
         const char *str= strrchr(s->path, '.');
-        s->split_planes = str && !strcasecmp(str + 1, "y");
+        s->split_planes = str && !av_strcasecmp(str + 1, "y");
         st->codec->codec_type = AVMEDIA_TYPE_VIDEO;
         st->codec->codec_id = av_str2id(img_tags, s->path);
     }
@@ -311,7 +311,8 @@ static int read_packet(AVFormatContext *s1, AVPacket *pkt)
                                   s->path, s->img_number)<0 && s->img_number > 1)
             return AVERROR(EIO);
         for(i=0; i<3; i++){
-            if (avio_open(&f[i], filename, AVIO_FLAG_READ) < 0) {
+            if (avio_open2(&f[i], filename, AVIO_FLAG_READ,
+                           &s1->interrupt_callback, NULL) < 0) {
                 if(i==1)
                     break;
                 av_log(s1, AV_LOG_ERROR, "Could not open file : %s\n",filename);
@@ -377,7 +378,7 @@ static int write_header(AVFormatContext *s)
         img->is_pipe = 1;
 
     str = strrchr(img->path, '.');
-    img->split_planes = str && !strcasecmp(str + 1, "y");
+    img->split_planes = str && !av_strcasecmp(str + 1, "y");
     return 0;
 }
 
@@ -391,14 +392,15 @@ static int write_packet(AVFormatContext *s, AVPacket *pkt)
 
     if (!img->is_pipe) {
         if (av_get_frame_filename(filename, sizeof(filename),
-                                  img->path, img->img_number) < 0 && img->img_number>1) {
+                                  img->path, img->img_number) < 0 && img->img_number>1 && !img->updatefirst) {
             av_log(s, AV_LOG_ERROR,
                    "Could not get frame filename number %d from pattern '%s'\n",
                    img->img_number, img->path);
             return AVERROR(EINVAL);
         }
         for(i=0; i<3; i++){
-            if (avio_open(&pb[i], filename, AVIO_FLAG_WRITE) < 0) {
+            if (avio_open2(&pb[i], filename, AVIO_FLAG_WRITE,
+                           &s->interrupt_callback, NULL) < 0) {
                 av_log(s, AV_LOG_ERROR, "Could not open file : %s\n",filename);
                 return AVERROR(EIO);
             }
@@ -461,11 +463,17 @@ static int write_packet(AVFormatContext *s, AVPacket *pkt)
 
 #define OFFSET(x) offsetof(VideoData, x)
 #define DEC AV_OPT_FLAG_DECODING_PARAM
+#define ENC AV_OPT_FLAG_ENCODING_PARAM
 static const AVOption options[] = {
     { "pixel_format", "", OFFSET(pixel_format), AV_OPT_TYPE_STRING, {.str = NULL}, 0, 0, DEC },
     { "video_size",   "", OFFSET(video_size),   AV_OPT_TYPE_STRING, {.str = NULL}, 0, 0, DEC },
     { "framerate",    "", OFFSET(framerate),    AV_OPT_TYPE_STRING, {.str = "25"}, 0, 0, DEC },
     { "loop",         "", OFFSET(loop),         AV_OPT_TYPE_INT,    {.dbl = 0},    0, 1, DEC },
+    { NULL },
+};
+
+static const AVOption muxoptions[] = {
+    { "updatefirst",  "", OFFSET(updatefirst),  AV_OPT_TYPE_INT,    {.dbl = 0},    0, 1, ENC },
     { NULL },
 };
 
@@ -507,6 +515,12 @@ AVInputFormat ff_image2pipe_demuxer = {
 
 /* output */
 #if CONFIG_IMAGE2_MUXER
+static const AVClass img2mux_class = {
+    .class_name = "image2 muxer",
+    .item_name  = av_default_item_name,
+    .option     = muxoptions,
+    .version    = LIBAVUTIL_VERSION_INT,
+};
 AVOutputFormat ff_image2_muxer = {
     .name           = "image2",
     .long_name      = NULL_IF_CONFIG_SMALL("image2 sequence"),
@@ -516,7 +530,8 @@ AVOutputFormat ff_image2_muxer = {
     .video_codec    = CODEC_ID_MJPEG,
     .write_header   = write_header,
     .write_packet   = write_packet,
-    .flags          = AVFMT_NOTIMESTAMPS | AVFMT_NODIMENSIONS | AVFMT_NOFILE
+    .flags          = AVFMT_NOTIMESTAMPS | AVFMT_NODIMENSIONS | AVFMT_NOFILE,
+    .priv_class     = &img2mux_class,
 };
 #endif
 #if CONFIG_IMAGE2PIPE_MUXER

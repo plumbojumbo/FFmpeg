@@ -30,7 +30,7 @@
 #include "avfilter.h"
 #include "internal.h"
 
-static const char *var_names[] = {
+static const char * const var_names[] = {
     "w",        ///< width of the input video
     "h",        ///< height of the input video
     "val",      ///< input value for the pixel
@@ -141,16 +141,16 @@ static av_cold void uninit(AVFilterContext *ctx)
     PIX_FMT_ABGR,         PIX_FMT_BGRA,         \
     PIX_FMT_RGB24,        PIX_FMT_BGR24
 
-static enum PixelFormat yuv_pix_fmts[] = { YUV_FORMATS, PIX_FMT_NONE };
-static enum PixelFormat rgb_pix_fmts[] = { RGB_FORMATS, PIX_FMT_NONE };
-static enum PixelFormat all_pix_fmts[] = { RGB_FORMATS, YUV_FORMATS, PIX_FMT_NONE };
+static const enum PixelFormat yuv_pix_fmts[] = { YUV_FORMATS, PIX_FMT_NONE };
+static const enum PixelFormat rgb_pix_fmts[] = { RGB_FORMATS, PIX_FMT_NONE };
+static const enum PixelFormat all_pix_fmts[] = { RGB_FORMATS, YUV_FORMATS, PIX_FMT_NONE };
 
 static int query_formats(AVFilterContext *ctx)
 {
     LutContext *lut = ctx->priv;
 
-    enum PixelFormat *pix_fmts = lut->is_rgb ? rgb_pix_fmts :
-                                 lut->is_yuv ? yuv_pix_fmts : all_pix_fmts;
+    const enum PixelFormat *pix_fmts = lut->is_rgb ? rgb_pix_fmts :
+                                       lut->is_yuv ? yuv_pix_fmts : all_pix_fmts;
 
     avfilter_set_common_pixel_formats(ctx, avfilter_make_format_list(pix_fmts));
     return 0;
@@ -339,13 +339,13 @@ static void draw_slice(AVFilterLink *inlink, int y, int h, int slice_dir)
         .uninit        = uninit,                                        \
         .query_formats = query_formats,                                 \
                                                                         \
-        .inputs    = (AVFilterPad[]) {{ .name            = "default",   \
+        .inputs    = (const AVFilterPad[]) {{ .name      = "default",   \
                                         .type            = AVMEDIA_TYPE_VIDEO, \
                                         .draw_slice      = draw_slice,  \
                                         .config_props    = config_props, \
                                         .min_perms       = AV_PERM_READ, }, \
                                       { .name = NULL}},                 \
-        .outputs   = (AVFilterPad[]) {{ .name            = "default",   \
+        .outputs   = (const AVFilterPad[]) {{ .name      = "default",   \
                                         .type            = AVMEDIA_TYPE_VIDEO, }, \
                                       { .name = NULL}},                 \
     }

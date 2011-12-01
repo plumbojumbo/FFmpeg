@@ -35,6 +35,7 @@
 
 #include "libavutil/imgutils.h"
 #include "avcodec.h"
+#include "internal.h"
 #include "dsputil.h"
 #include "get_bits.h"
 
@@ -1308,6 +1309,10 @@ static inline int vp3_dequant(Vp3DecodeContext *s, Vp3Fragment *frag,
         case 1: // zero run
             s->dct_tokens[plane][i]++;
             i += (token >> 2) & 0x7f;
+            if(i>63){
+                av_log(s->avctx, AV_LOG_ERROR, "Coefficient index overflow\n");
+                return -1;
+            }
             block[perm[i]] = (token >> 9) * dequantizer[perm[i]];
             i++;
             break;
@@ -1588,9 +1593,6 @@ static av_cold int allocate_tables(AVCodecContext *avctx)
     return 0;
 }
 
-/*
- * This is the ffmpeg/libavcodec API init function.
- */
 static av_cold int vp3_decode_init(AVCodecContext *avctx)
 {
     Vp3DecodeContext *s = avctx->priv_data;
@@ -1842,9 +1844,6 @@ static int vp3_update_thread_context(AVCodecContext *dst, const AVCodecContext *
     return 0;
 }
 
-/*
- * This is the ffmpeg/libavcodec API frame decode function.
- */
 static int vp3_decode_frame(AVCodecContext *avctx,
                             void *data, int *data_size,
                             AVPacket *avpkt)
@@ -2002,9 +2001,6 @@ error:
 
 static void vp3_decode_flush(AVCodecContext *avctx);
 
-/*
- * This is the ffmpeg/libavcodec API module cleanup function.
- */
 static av_cold int vp3_decode_end(AVCodecContext *avctx)
 {
     Vp3DecodeContext *s = avctx->priv_data;
@@ -2020,7 +2016,8 @@ static av_cold int vp3_decode_end(AVCodecContext *avctx)
     av_free(s->motion_val[1]);
     av_free(s->edge_emu_buffer);
 
-    if (avctx->is_copy) return 0;
+    if (avctx->internal->is_copy)
+        return 0;
 
     for (i = 0; i < 16; i++) {
         free_vlc(&s->dc_vlc[i]);

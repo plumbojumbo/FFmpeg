@@ -22,7 +22,7 @@
 
 /**
  * @file
- * drawtext filter, based on the original FFmpeg vhook/drawtext.c
+ * drawtext filter, based on the original vhook/drawtext.c
  * filter by Gustavo Sverzut Barbieri
  */
 
@@ -46,7 +46,7 @@
 #include FT_FREETYPE_H
 #include FT_GLYPH_H
 
-static const char *var_names[] = {
+static const char * const var_names[] = {
     "w",                      ///< width  of the input video
     "h",                      ///< height of the input video
     "tw", "text_w",           ///< width  of the rendered text
@@ -359,7 +359,7 @@ static av_cold int init(AVFilterContext *ctx, const char *args, void *opaque)
     load_glyph(ctx, NULL, 0);
 
     /* set the tabsize in pixels */
-    if ((err = load_glyph(ctx, &glyph, ' ') < 0)) {
+    if ((err = load_glyph(ctx, &glyph, ' ')) < 0) {
         av_log(ctx, AV_LOG_ERROR, "Could not set tabsize.\n");
         return err;
     }
@@ -823,7 +823,7 @@ AVFilter avfilter_vf_drawtext = {
     .uninit        = uninit,
     .query_formats = query_formats,
 
-    .inputs    = (AVFilterPad[]) {{ .name             = "default",
+    .inputs    = (const AVFilterPad[]) {{ .name       = "default",
                                     .type             = AVMEDIA_TYPE_VIDEO,
                                     .get_video_buffer = avfilter_null_get_video_buffer,
                                     .start_frame      = avfilter_null_start_frame,
@@ -834,7 +834,7 @@ AVFilter avfilter_vf_drawtext = {
                                                         AV_PERM_READ,
                                     .rej_perms        = AV_PERM_PRESERVE },
                                   { .name = NULL}},
-    .outputs   = (AVFilterPad[]) {{ .name             = "default",
+    .outputs   = (const AVFilterPad[]) {{ .name       = "default",
                                     .type             = AVMEDIA_TYPE_VIDEO, },
                                   { .name = NULL}},
     .process_command = command,

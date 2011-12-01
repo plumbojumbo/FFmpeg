@@ -35,6 +35,7 @@
 #include "libswscale/swscale.h"
 #include "libpostproc/postprocess.h"
 #include "libavutil/avstring.h"
+#include "libavutil/mathematics.h"
 #include "libavutil/parseutils.h"
 #include "libavutil/pixdesc.h"
 #include "libavutil/eval.h"
@@ -774,6 +775,8 @@ int opt_pix_fmts(const char *opt, const char *arg)
 
     for (pix_fmt = 0; pix_fmt < PIX_FMT_NB; pix_fmt++) {
         const AVPixFmtDescriptor *pix_desc = &av_pix_fmt_descriptors[pix_fmt];
+        if(!pix_desc->name)
+            continue;
         printf("%c%c%c%c%c %-16s       %d            %2d\n",
                sws_isSupportedInput (pix_fmt)      ? 'I' : '.',
                sws_isSupportedOutput(pix_fmt)      ? 'O' : '.',
@@ -807,8 +810,9 @@ int read_yesno(void)
     return yesno;
 }
 
-int read_file(const char *filename, char **bufptr, size_t *size)
+int cmdutils_read_file(const char *filename, char **bufptr, size_t *size)
 {
+    int ret;
     FILE *f = fopen(filename, "rb");
 
     if (!f) {
@@ -824,11 +828,22 @@ int read_file(const char *filename, char **bufptr, size_t *size)
         fclose(f);
         return AVERROR(ENOMEM);
     }
-    fread(*bufptr, 1, *size, f);
-    (*bufptr)[*size++] = '\0';
+    ret = fread(*bufptr, 1, *size, f);
+    if (ret < *size) {
+        av_free(*bufptr);
+        if (ferror(f)) {
+            av_log(NULL, AV_LOG_ERROR, "Error while reading file '%s': %s\n",
+                   filename, strerror(errno));
+            ret = AVERROR(errno);
+        } else
+            ret = AVERROR_EOF;
+    } else {
+        ret = 0;
+        (*bufptr)[*size++] = '\0';
+    }
 
     fclose(f);
-    return 0;
+    return ret;
 }
 
 FILE *get_preset_file(char *filename, size_t filename_size,
@@ -930,11 +945,10 @@ int check_stream_specifier(AVFormatContext *s, AVStream *st, const char *spec)
     return AVERROR(EINVAL);
 }
 
-AVDictionary *filter_codec_opts(AVDictionary *opts, enum CodecID codec_id, AVFormatContext *s, AVStream *st)
+AVDictionary *filter_codec_opts(AVDictionary *opts, AVCodec *codec, AVFormatContext *s, AVStream *st)
 {
     AVDictionary    *ret = NULL;
     AVDictionaryEntry *t = NULL;
-    AVCodec       *codec = s->oformat ? avcodec_find_encoder(codec_id) : avcodec_find_decoder(codec_id);
     int            flags = s->oformat ? AV_OPT_FLAG_ENCODING_PARAM : AV_OPT_FLAG_DECODING_PARAM;
     char          prefix = 0;
     const AVClass    *cc = avcodec_get_class();
@@ -984,7 +998,7 @@ AVDictionary **setup_find_stream_info_opts(AVFormatContext *s, AVDictionary *cod
         return NULL;
     }
     for (i = 0; i < s->nb_streams; i++)
-        opts[i] = filter_codec_opts(codec_opts, s->streams[i]->codec->codec_id, s, s->streams[i]);
+        opts[i] = filter_codec_opts(codec_opts, avcodec_find_decoder(s->streams[i]->codec->codec_id), s, s->streams[i]);
     return opts;
 }
 

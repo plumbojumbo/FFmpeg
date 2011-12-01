@@ -212,7 +212,7 @@ int check_stream_specifier(AVFormatContext *s, AVStream *st, const char *spec);
  * @param st A stream from s for which the options should be filtered.
  * @return a pointer to the created dictionary
  */
-AVDictionary *filter_codec_opts(AVDictionary *opts, enum CodecID codec_id, AVFormatContext *s, AVStream *st);
+AVDictionary *filter_codec_opts(AVDictionary *opts, AVCodec *codec, AVFormatContext *s, AVStream *st);
 
 /**
  * Setup AVCodecContext options for avformat_find_stream_info().
@@ -323,7 +323,7 @@ int read_yesno(void);
  * @return 0 in case of success, a negative value corresponding to an
  * AVERROR error code in case of failure.
  */
-int read_file(const char *filename, char **bufptr, size_t *size);
+int cmdutils_read_file(const char *filename, char **bufptr, size_t *size);
 
 /**
  * Get a file corresponding to a preset file.

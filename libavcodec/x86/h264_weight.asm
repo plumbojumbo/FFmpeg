@@ -122,11 +122,7 @@ cglobal h264_weight_%1_%3, 6, 6, %2
 
 INIT_MMX
 WEIGHT_FUNC_HALF_MM 4, 0, mmx2
-WEIGHT_FUNC_HALF_MM 4, 0, mmx2
-WEIGHT_FUNC_HALF_MM 4, 0, mmx2
 INIT_XMM
-WEIGHT_FUNC_HALF_MM 8, 8, sse2
-WEIGHT_FUNC_HALF_MM 8, 8, sse2
 WEIGHT_FUNC_HALF_MM 8, 8, sse2
 
 %macro BIWEIGHT_SETUP 0
@@ -257,6 +253,13 @@ BIWEIGHT_FUNC_HALF_MM 8, 8, sse2
     add  off_regd, 1
     or   off_regd, 1
     add        r4, 1
+    cmp        r5, 128
+     jne .normal
+    sar        r5, 1
+    sar        r6, 1
+    sar  off_regd, 1
+    sub        r4, 1
+.normal
     movd       m4, r5d
     movd       m0, r6d
     movd       m5, off_regd

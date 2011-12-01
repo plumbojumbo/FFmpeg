@@ -31,6 +31,8 @@ struct dshow_ctx {
     IGraphBuilder *graph;
 
     char *device_name[2];
+    int video_device_number;
+    int audio_device_number;
 
     int   list_options;
     int   list_devices;
@@ -70,6 +72,7 @@ static enum PixelFormat dshow_pixfmt(DWORD biCompression, WORD biBitCount)
         return PIX_FMT_YUYV422;
     case MKTAG('I', '4', '2', '0'):
         return PIX_FMT_YUV420P;
+    case BI_BITFIELDS:
     case BI_RGB:
         switch(biBitCount) { /* 1-8 are untested */
             case 1:
@@ -119,10 +122,12 @@ dshow_read_close(AVFormatContext *s)
         if (r == S_OK) {
             IBaseFilter *f;
             IEnumFilters_Reset(fenum);
-            while (IEnumFilters_Next(fenum, 1, &f, NULL) == S_OK)
+            while (IEnumFilters_Next(fenum, 1, &f, NULL) == S_OK) {
                 if (IGraphBuilder_RemoveFilter(ctx->graph, f) == S_OK)
                     IEnumFilters_Reset(fenum); /* When a filter is removed,
                                                 * the list must be reset. */
+                IBaseFilter_Release(f);
+            }
             IEnumFilters_Release(fenum);
         }
         IGraphBuilder_Release(ctx->graph);
@@ -249,6 +254,8 @@ dshow_cycle_devices(AVFormatContext *avctx, ICreateDevEnum *devenum,
     IEnumMoniker *classenum = NULL;
     IMoniker *m = NULL;
     const char *device_name = ctx->device_name[devtype];
+    int skip = (devtype == VideoDevice) ? ctx->video_device_number
+                                        : ctx->audio_device_number;
     int r;
 
     const GUID *device_guid[2] = { &CLSID_VideoInputDeviceCategory,
@@ -283,7 +290,8 @@ dshow_cycle_devices(AVFormatContext *avctx, ICreateDevEnum *devenum,
             if (strcmp(device_name, buf))
                 goto fail1;
 
-            IMoniker_BindToObject(m, 0, 0, &IID_IBaseFilter, (void *) &device_filter);
+            if (!skip--)
+                IMoniker_BindToObject(m, 0, 0, &IID_IBaseFilter, (void *) &device_filter);
         } else {
             av_log(avctx, AV_LOG_INFO, " \"%s\"\n", buf);
         }
@@ -364,9 +372,9 @@ dshow_cycle_formats(AVFormatContext *avctx, enum dshowDeviceType devtype,
             if (!pformat_set) {
                 av_log(avctx, AV_LOG_INFO, "  min s=%ldx%ld fps=%g max s=%ldx%ld fps=%g\n",
                        vcaps->MinOutputSize.cx, vcaps->MinOutputSize.cy,
-                       1e7 / vcaps->MinFrameInterval,
+                       1e7 / vcaps->MaxFrameInterval,
                        vcaps->MaxOutputSize.cx, vcaps->MaxOutputSize.cy,
-                       1e7 / vcaps->MaxFrameInterval);
+                       1e7 / vcaps->MinFrameInterval);
                 continue;
             }
             if (ctx->framerate) {
@@ -554,11 +562,13 @@ static int
 dshow_list_device_options(AVFormatContext *avctx, ICreateDevEnum *devenum,
                           enum dshowDeviceType devtype)
 {
+    struct dshow_ctx *ctx = avctx->priv_data;
     IBaseFilter *device_filter = NULL;
     int r;
 
     if ((r = dshow_cycle_devices(avctx, devenum, devtype, &device_filter)) < 0)
         return r;
+    ctx->device_filter[devtype] = device_filter;
     if ((r = dshow_cycle_pins(avctx, devtype, device_filter, NULL)) < 0)
         return r;
 
@@ -659,11 +669,12 @@ dshow_add_device(AVFormatContext *avctx, AVFormatParameters *ap,
     AVStream *st;
     int ret = AVERROR(EIO);
 
-    st = av_new_stream(avctx, devtype);
+    st = avformat_new_stream(avctx, NULL);
     if (!st) {
         ret = AVERROR(ENOMEM);
         goto error;
     }
+    st->id = devtype;
 
     ctx->capture_filter[devtype]->stream_index = st->index;
 
@@ -701,7 +712,7 @@ dshow_add_device(AVFormatContext *avctx, AVFormatParameters *ap,
             codec->bits_per_coded_sample = bih->biBitCount;
         } else {
             codec->codec_id = CODEC_ID_RAWVIDEO;
-            if (bih->biCompression == BI_RGB) {
+            if (bih->biCompression == BI_RGB || bih->biCompression == BI_BITFIELDS) {
                 codec->bits_per_coded_sample = bih->biBitCount;
                 codec->extradata = av_malloc(9 + FF_INPUT_BUFFER_PADDING_SIZE);
                 if (codec->extradata) {
@@ -937,6 +948,8 @@ static const AVOption options[] = {
     { "list_options", "list available options for specified device", OFFSET(list_options), AV_OPT_TYPE_INT, {.dbl=0}, 0, 1, DEC, "list_options" },
     { "true", "", 0, AV_OPT_TYPE_CONST, {.dbl=1}, 0, 0, DEC, "list_options" },
     { "false", "", 0, AV_OPT_TYPE_CONST, {.dbl=0}, 0, 0, DEC, "list_options" },
+    { "video_device_number", "set video device number for devices with same name (starts at 0)", OFFSET(video_device_number), AV_OPT_TYPE_INT, {.dbl = 0}, 0, INT_MAX, DEC },
+    { "audio_device_number", "set audio device number for devices with same name (starts at 0)", OFFSET(audio_device_number), AV_OPT_TYPE_INT, {.dbl = 0}, 0, INT_MAX, DEC },
     { NULL },
 };
 

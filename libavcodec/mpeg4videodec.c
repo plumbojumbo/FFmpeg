@@ -20,6 +20,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "libavutil/opt.h"
 #include "mpegvideo.h"
 #include "mpeg4video.h"
 #include "h263.h"
@@ -1877,7 +1878,7 @@ static int decode_user_data(MpegEncContext *s, GetBitContext *gb){
         }
     }
 
-    /* ffmpeg detection */
+    /* libavcodec detection */
     e=sscanf(buf, "FFmpe%*[^b]b%d", &build)+3;
     if(e!=4)
         e=sscanf(buf, "FFmpeg v%d.%d.%d / libavcodec build: %d", &ver, &ver2, &ver3, &build);
@@ -2138,7 +2139,7 @@ int ff_mpeg4_decode_picture_header(MpegEncContext * s, GetBitContext *gb)
     startcode = 0xff;
     for(;;) {
         if(get_bits_count(gb) >= gb->size_in_bits){
-            if(gb->size_in_bits==8 && (s->divx_version>=0 || s->xvid_build>=0)){
+            if(gb->size_in_bits==8 && (s->divx_version>=0 || s->xvid_build>=0) || s->codec_tag == AV_RL32("QMP4")){
                 av_log(s->avctx, AV_LOG_WARNING, "frame skip %d\n", gb->size_in_bits);
                 return FRAME_SKIPPED; //divx bug
             }else
@@ -2276,6 +2277,26 @@ static const AVProfile mpeg4_video_profiles[] = {
     { FF_PROFILE_MPEG4_ADVANCED_SIMPLE,           "Advanced Simple Profile" },
 };
 
+static const AVOption mpeg4_options[] = {
+    {"quarter_sample", "1/4 subpel MC", offsetof(MpegEncContext, quarter_sample), FF_OPT_TYPE_INT, {.dbl = 0}, 0, 1, 0},
+    {"divx_packed", "divx style packed b frames", offsetof(MpegEncContext, divx_packed), FF_OPT_TYPE_INT, {.dbl = 0}, 0, 1, 0},
+    {NULL}
+};
+
+static const AVClass mpeg4_class = {
+    "MPEG4 Video Decoder",
+    av_default_item_name,
+    mpeg4_options,
+    LIBAVUTIL_VERSION_INT,
+};
+
+static const AVClass mpeg4_vdpau_class = {
+    "MPEG4 Video VDPAU Decoder",
+    av_default_item_name,
+    mpeg4_options,
+    LIBAVUTIL_VERSION_INT,
+};
+
 AVCodec ff_mpeg4_decoder = {
     .name           = "mpeg4",
     .type           = AVMEDIA_TYPE_VIDEO,
@@ -2290,7 +2311,8 @@ AVCodec ff_mpeg4_decoder = {
     .long_name= NULL_IF_CONFIG_SMALL("MPEG-4 part 2"),
     .pix_fmts= ff_hwaccel_pixfmt_list_420,
     .profiles = NULL_IF_CONFIG_SMALL(mpeg4_video_profiles),
-    .update_thread_context= ONLY_IF_THREADS_ENABLED(ff_mpeg_update_thread_context)
+    .update_thread_context= ONLY_IF_THREADS_ENABLED(ff_mpeg_update_thread_context),
+    .priv_class = &mpeg4_class,
 };
 
 
@@ -2306,5 +2328,6 @@ AVCodec ff_mpeg4_vdpau_decoder = {
     .capabilities   = CODEC_CAP_DR1 | CODEC_CAP_TRUNCATED | CODEC_CAP_DELAY | CODEC_CAP_HWACCEL_VDPAU,
     .long_name= NULL_IF_CONFIG_SMALL("MPEG-4 part 2 (VDPAU)"),
     .pix_fmts= (const enum PixelFormat[]){PIX_FMT_VDPAU_MPEG4, PIX_FMT_NONE},
+    .priv_class = &mpeg4_vdpau_class,
 };
 #endif

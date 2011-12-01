@@ -63,18 +63,18 @@ static int read_header(AVFormatContext *s,
                            AVFormatParameters *ap)
 {
     ACTContext* ctx = s->priv_data;
-    ByteIOContext *pb = s->pb;
+    AVIOContext *pb = s->pb;
     int size;
     AVStream* st;
 
     int min,sec,msec;
 
-    st=av_new_stream(s, 0);
+    st = avformat_new_stream(s, NULL);
     if (!st)
         return AVERROR(ENOMEM);
 
-    url_fskip(pb, 16);
-    size=get_le32(pb);
+    avio_skip(pb, 16);
+    size=avio_rl32(pb);
     ff_get_wav_header(pb, st->codec, size);
 
     /*
@@ -92,16 +92,16 @@ static int read_header(AVFormatContext *s,
 
     st->codec->codec_id=CODEC_ID_G729;
 
-    url_fseek(pb, 257, SEEK_SET);
-    msec=get_le16(pb);
-    sec=get_byte(pb);
-    min=get_le32(pb);
+    avio_seek(pb, 257, SEEK_SET);
+    msec=avio_rl16(pb);
+    sec=avio_r8(pb);
+    min=avio_rl32(pb);
 
     st->duration = av_rescale(1000*(min*60+sec)+msec, st->codec->sample_rate, 1000 * st->codec->frame_size);
 
     ctx->bytes_left_in_chunk=CHUNK_SIZE;
 
-    url_fseek(pb, 512, SEEK_SET);
+    avio_seek(pb, 512, SEEK_SET);
 
     return 0;
 }
@@ -111,7 +111,7 @@ static int read_packet(AVFormatContext *s,
                           AVPacket *pkt)
 {
     ACTContext *ctx = s->priv_data;
-    ByteIOContext *pb = s->pb;
+    AVIOContext *pb = s->pb;
     int ret;
     int frame_size=s->streams[0]->codec->sample_rate==8000?10:22;
 
@@ -126,7 +126,7 @@ static int read_packet(AVFormatContext *s,
 
     if(s->streams[0]->codec->sample_rate==4400 && !ctx->second_packet)
     {
-        ret = get_buffer(pb, ctx->audio_buffer, frame_size);
+        ret = avio_read(pb, ctx->audio_buffer, frame_size);
 
         if(ret<0)
             return ret;
@@ -165,7 +165,7 @@ static int read_packet(AVFormatContext *s,
     }
     else // 8000 Hz
     {
-        ret = get_buffer(pb, ctx->audio_buffer, frame_size);
+        ret = avio_read(pb, ctx->audio_buffer, frame_size);
 
         if(ret<0)
             return ret;
@@ -188,7 +188,7 @@ static int read_packet(AVFormatContext *s,
 
     if(ctx->bytes_left_in_chunk < frame_size)
     {
-        url_fskip(pb, ctx->bytes_left_in_chunk);
+        avio_skip(pb, ctx->bytes_left_in_chunk);
         ctx->bytes_left_in_chunk=CHUNK_SIZE;
     }
 
