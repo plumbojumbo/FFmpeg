@@ -370,7 +370,7 @@ static int oma_read_header(AVFormatContext *s,
             /* sample rate x orig. block align x 8 */
             st->codec->bit_rate = st->codec->sample_rate * 32;
             st->codec->bits_per_coded_sample = av_get_bits_per_sample(st->codec->codec_id);
-            av_set_pts_info(st, 64, 1, st->codec->sample_rate);
+            avpriv_set_pts_info(st, 64, 1, st->codec->sample_rate);
             break;
         default:
             av_log(s, AV_LOG_ERROR, "Unsupported codec %d!\n",buf[32]);
