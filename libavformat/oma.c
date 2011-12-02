@@ -408,9 +408,9 @@ static int oma_read_probe(AVProbeData *p)
     buf = p->buf;
 
     if (p->buf_size < ID3v2_HEADER_SIZE ||
-            !ff_id3v2_match(buf, ID3v2_EA3_MAGIC) ||
-            !buf[3] == 3 || /* version must be 3 */
-            buf[4]) /* flags byte zero */
+        !ff_id3v2_match(buf, ID3v2_EA3_MAGIC) ||
+        buf[3] != 3 || /* version must be 3 */
+        buf[4]) /* flags byte zero */
         return 0;
 
     tag_len = ff_id3v2_tag_len(buf);
