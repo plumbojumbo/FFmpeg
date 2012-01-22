@@ -11,6 +11,8 @@ set -e
 
 eval do_$test=y
 
+ENC_OPTS="$ENC_OPTS -metadata title=lavftest"
+
 do_lavf()
 {
     file=${outfile}lavf.$1
@@ -106,6 +108,10 @@ if [ -n "$do_mkv" ] ; then
 do_lavf mkv "-acodec mp2 -ab 64k -vcodec mpeg4"
 fi
 
+if [ -n "$do_wtv" ] ; then
+do_lavf wtv "-acodec mp2"
+fi
+
 
 # streamed images
 # mjpeg
@@ -149,6 +155,8 @@ fi
 
 if [ -n "$do_png" ] ; then
 do_image_formats png
+do_image_formats png "-pix_fmt gray16be"
+do_image_formats png "-pix_fmt rgb48be"
 fi
 
 if [ -n "$do_bmp" ] ; then
@@ -173,6 +181,10 @@ fi
 
 if [ -n "$do_pcx" ] ; then
 do_image_formats pcx
+fi
+
+if [ -n "$do_dpx" ] ; then
+do_image_formats dpx
 fi
 
 # audio only
@@ -215,6 +227,14 @@ fi
 
 if [ -n "$do_rso" ] ; then
 do_audio_only rso
+fi
+
+if [ -n "$do_sox" ] ; then
+do_audio_only sox
+fi
+
+if [ -n "$do_caf" ] ; then
+do_audio_only caf
 fi
 
 # pix_fmt conversions

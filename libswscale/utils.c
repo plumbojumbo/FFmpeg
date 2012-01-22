@@ -44,12 +44,14 @@
 #include "libavutil/cpu.h"
 #include "libavutil/avutil.h"
 #include "libavutil/bswap.h"
+#include "libavutil/mathematics.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "libavutil/avassert.h"
 
 unsigned swscale_version(void)
 {
+    av_assert0(LIBSWSCALE_VERSION_MICRO >= 100);
     return LIBSWSCALE_VERSION_INT;
 }
 
@@ -70,7 +72,7 @@ typedef struct FormatEntry {
     int is_supported_in, is_supported_out;
 } FormatEntry;
 
-const static FormatEntry format_entries[PIX_FMT_NB] = {
+static const FormatEntry format_entries[PIX_FMT_NB] = {
     [PIX_FMT_YUV420P]     = { 1 , 1 },
     [PIX_FMT_YUYV422]     = { 1 , 1 },
     [PIX_FMT_RGB24]       = { 1 , 1 },
@@ -127,10 +129,10 @@ const static FormatEntry format_entries[PIX_FMT_NB] = {
     [PIX_FMT_YUV422P16BE] = { 1 , 1 },
     [PIX_FMT_YUV444P16LE] = { 1 , 1 },
     [PIX_FMT_YUV444P16BE] = { 1 , 1 },
-    [PIX_FMT_RGB444LE]    = { 0 , 1 },
-    [PIX_FMT_RGB444BE]    = { 0 , 1 },
-    [PIX_FMT_BGR444LE]    = { 0 , 1 },
-    [PIX_FMT_BGR444BE]    = { 0 , 1 },
+    [PIX_FMT_RGB444LE]    = { 1 , 1 },
+    [PIX_FMT_RGB444BE]    = { 1 , 1 },
+    [PIX_FMT_BGR444LE]    = { 1 , 1 },
+    [PIX_FMT_BGR444BE]    = { 1 , 1 },
     [PIX_FMT_Y400A]       = { 1 , 0 },
     [PIX_FMT_BGR48BE]     = { 1 , 1 },
     [PIX_FMT_BGR48LE]     = { 1 , 1 },
@@ -219,7 +221,7 @@ static int initFilter(int16_t **outFilter, int16_t **filterPos, int *outFilterSi
 
     } else if (flags&SWS_POINT) { // lame looking point sampling mode
         int i;
-        int xDstInSrc;
+        int64_t xDstInSrc;
         filterSize= 1;
         FF_ALLOC_OR_GOTO(NULL, filter, dstW*sizeof(*filter)*filterSize, fail);
 
@@ -233,7 +235,7 @@ static int initFilter(int16_t **outFilter, int16_t **filterPos, int *outFilterSi
         }
     } else if ((xInc <= (1<<16) && (flags&SWS_AREA)) || (flags&SWS_FAST_BILINEAR)) { // bilinear upscale
         int i;
-        int xDstInSrc;
+        int64_t xDstInSrc;
         filterSize= 2;
         FF_ALLOC_OR_GOTO(NULL, filter, dstW*sizeof(*filter)*filterSize, fail);
 
@@ -245,7 +247,7 @@ static int initFilter(int16_t **outFilter, int16_t **filterPos, int *outFilterSi
             (*filterPos)[i]= xx;
             //bilinear upscale / linear interpolate / area averaging
             for (j=0; j<filterSize; j++) {
-                int64_t coeff= fone - FFABS((xx<<16) - xDstInSrc)*(fone>>16);
+                int64_t coeff= fone - FFABS(((int64_t)xx<<16) - xDstInSrc)*(fone>>16);
                 if (coeff<0) coeff=0;
                 filter[i*filterSize + j]= coeff;
                 xx++;
@@ -253,7 +255,7 @@ static int initFilter(int16_t **outFilter, int16_t **filterPos, int *outFilterSi
             xDstInSrc+= xInc;
         }
     } else {
-        int xDstInSrc;
+        int64_t xDstInSrc;
         int sizeFactor;
 
         if      (flags&SWS_BICUBIC)      sizeFactor=  4;
@@ -282,7 +284,7 @@ static int initFilter(int16_t **outFilter, int16_t **filterPos, int *outFilterSi
             int j;
             (*filterPos)[i]= xx;
             for (j=0; j<filterSize; j++) {
-                int64_t d= ((int64_t)FFABS((xx<<17) - xDstInSrc))<<13;
+                int64_t d= (FFABS(((int64_t)xx<<17) - xDstInSrc))<<13;
                 double floatd;
                 int64_t coeff;
 
@@ -816,7 +818,7 @@ int sws_init_context(SwsContext *c, SwsFilter *srcFilter, SwsFilter *dstFilter)
                 |SWS_SPLINE
                 |SWS_BICUBLIN);
     if(!i || (i & (i-1))) {
-        av_log(c, AV_LOG_ERROR, "Exactly one scaler algorithm must be chosen\n");
+        av_log(c, AV_LOG_ERROR, "Exactly one scaler algorithm must be chosen, got %X\n", i);
         return AVERROR(EINVAL);
     }
     /* sanity check */
@@ -848,7 +850,14 @@ int sws_init_context(SwsContext *c, SwsFilter *srcFilter, SwsFilter *dstFilter)
     getSubSampleFactors(&c->chrDstHSubSample, &c->chrDstVSubSample, dstFormat);
 
     // reuse chroma for 2 pixels RGB/BGR unless user wants full chroma interpolation
-    if (isAnyRGB(dstFormat) && !(flags&SWS_FULL_CHR_H_INT)) c->chrDstHSubSample=1;
+    if (isAnyRGB(dstFormat) && !(flags&SWS_FULL_CHR_H_INT)) {
+        if (dstW&1) {
+            av_log(c, AV_LOG_DEBUG, "Forcing full internal H chroma due to odd output size\n");
+            flags |= SWS_FULL_CHR_H_INT;
+            c->flags = flags;
+        } else
+            c->chrDstHSubSample = 1;
+    }
 
     // drop some chroma lines if the user wants it
     c->vChrDrop= (flags&SWS_SRC_V_CHR_DROP_MASK)>>SWS_SRC_V_CHR_DROP_SHIFT;
@@ -947,7 +956,10 @@ int sws_init_context(SwsContext *c, SwsFilter *srcFilter, SwsFilter *dstFilter)
 #else
             if (!c->lumMmx2FilterCode || !c->chrMmx2FilterCode)
 #endif
+            {
+                av_log(c, AV_LOG_ERROR, "Failed to allocate MMX2FilterCode\n");
                 return AVERROR(ENOMEM);
+            }
             FF_ALLOCZ_OR_GOTO(c, c->hLumFilter   , (dstW        /8+8)*sizeof(int16_t), fail);
             FF_ALLOCZ_OR_GOTO(c, c->hChrFilter   , (c->chrDstW  /4+8)*sizeof(int16_t), fail);
             FF_ALLOCZ_OR_GOTO(c, c->hLumFilterPos, (dstW      /2/8+8)*sizeof(int32_t), fail);

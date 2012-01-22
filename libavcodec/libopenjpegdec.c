@@ -52,9 +52,10 @@ static enum PixelFormat check_image_attributes(AVCodecContext *avctx, opj_image_
 
     switch (compRatio) {
     case 0111111: goto libopenjpeg_yuv444_rgb;
+    case 0111212: return PIX_FMT_YUV440P;
     case 0112121: goto libopenjpeg_yuv422;
     case 0112222: goto libopenjpeg_yuv420;
-    default: return PIX_FMT_RGB24;
+    default: goto libopenjpeg_rgb;
     }
 
 libopenjpeg_yuv420:
@@ -80,7 +81,23 @@ libopenjpeg_yuv444_rgb:
     case 10: return PIX_FMT_YUV444P10;
     case 16: return PIX_FMT_YUV444P16;
     }
+
+libopenjpeg_rgb:
+    switch (c0.prec) {
+    case 8: return PIX_FMT_RGB24;
+    default: return PIX_FMT_RGB48;
+    }
+
     return PIX_FMT_RGB24;
+}
+
+static int is_yuva420(opj_image_t *image)
+{
+    return image->numcomps == 4 &&
+           image->comps[0].dx == 1 && image->comps[0].dy == 1 &&
+           image->comps[1].dx == 2 && image->comps[1].dy == 2 &&
+           image->comps[2].dx == 2 && image->comps[2].dy == 2 &&
+           image->comps[3].dx == 1 && image->comps[3].dy == 1;
 }
 
 static inline int libopenjpeg_ispacked(enum PixelFormat pix_fmt) {
@@ -107,6 +124,24 @@ static inline void libopenjpeg_copy_to_packed8(AVFrame *picture, opj_image_t *im
     }
 }
 
+static inline void libopenjpeg_copy_to_packed16(AVFrame *picture, opj_image_t *image) {
+    uint16_t *img_ptr;
+    int index, x, y, c;
+    int adjust[4];
+    for (x = 0; x < image->numcomps; x++) {
+        adjust[x] = FFMAX(FFMIN(16 - image->comps[x].prec, 8), 0);
+    }
+    for (y = 0; y < picture->height; y++) {
+        index = y*picture->width;
+        img_ptr = (uint16_t*) (picture->data[0] + y*picture->linesize[0]);
+        for (x = 0; x < picture->width; x++, index++) {
+            for (c = 0; c < image->numcomps; c++) {
+                *img_ptr++ = image->comps[c].data[index] << adjust[c];
+            }
+        }
+    }
+}
+
 static inline void libopenjpeg_copyto8(AVFrame *picture, opj_image_t *image) {
     int *comp_data;
     uint8_t *img_ptr;
@@ -114,8 +149,8 @@ static inline void libopenjpeg_copyto8(AVFrame *picture, opj_image_t *image) {
 
     for(index = 0; index < image->numcomps; index++) {
         comp_data = image->comps[index].data;
-        img_ptr = picture->data[index];
         for(y = 0; y < image->comps[index].h; y++) {
+            img_ptr = picture->data[index] + y * picture->linesize[index];
             for(x = 0; x < image->comps[index].w; x++) {
                 *img_ptr = (uint8_t) *comp_data;
                 img_ptr++;
@@ -131,8 +166,8 @@ static inline void libopenjpeg_copyto16(AVFrame *picture, opj_image_t *image) {
     int index, x, y;
     for(index = 0; index < image->numcomps; index++) {
         comp_data = image->comps[index].data;
-        img_ptr = (uint16_t*) picture->data[index];
         for(y = 0; y < image->comps[index].h; y++) {
+            img_ptr = (uint16_t*) (picture->data[index] + y * picture->linesize[index]);
             for(x = 0; x < image->comps[index].w; x++) {
                 *img_ptr = *comp_data;
                 img_ptr++;
@@ -227,7 +262,7 @@ static int libopenjpeg_decode_frame(AVCodecContext *avctx,
              break;
     case 3:  avctx->pix_fmt = check_image_attributes(avctx, image);
              break;
-    case 4:  avctx->pix_fmt = PIX_FMT_RGBA;
+    case 4:  avctx->pix_fmt = is_yuva420(image) ? PIX_FMT_YUVA420P : PIX_FMT_RGBA;
              break;
     default: av_log(avctx, AV_LOG_ERROR, "%d components unsupported.\n", image->numcomps);
              goto done;
@@ -240,8 +275,6 @@ static int libopenjpeg_decode_frame(AVCodecContext *avctx,
         av_log(avctx, AV_LOG_ERROR, "ff_thread_get_buffer() failed\n");
         return -1;
     }
-
-    ff_thread_finish_setup(avctx);
 
     ctx->dec_params.cp_limit_decoding = NO_LIMITATION;
     ctx->dec_params.cp_reduce = avctx->lowres;
@@ -273,8 +306,14 @@ static int libopenjpeg_decode_frame(AVCodecContext *avctx,
         libopenjpeg_copyto16(picture, image);
         break;
     case 3:
+    case 4:
         if (ispacked) {
             libopenjpeg_copy_to_packed8(picture, image);
+        }
+        break;
+    case 6:
+        if (ispacked) {
+            libopenjpeg_copy_to_packed16(picture, image);
         }
         break;
     default:

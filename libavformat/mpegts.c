@@ -380,7 +380,7 @@ static void mpegts_close_filter(MpegTSContext *ts, MpegTSFilter *filter)
         PESContext *pes = filter->u.pes_filter.opaque;
         av_freep(&pes->buffer);
         /* referenced private data will be freed later in
-         * av_close_input_stream */
+         * avformat_close_input */
         if (!((PESContext *)filter->u.pes_filter.opaque)->st) {
             av_freep(&filter->u.pes_filter.opaque);
         }
@@ -665,7 +665,7 @@ static void new_pes_packet(PESContext *pes, AVPacket *pkt)
     pkt->size = pes->data_index;
 
     if(pes->total_size != MAX_PES_PAYLOAD &&
-       pes->pes_header_size + pes->data_index != pes->total_size + 6) {
+       pes->pes_header_size + pes->data_index != pes->total_size + PES_START_SIZE) {
         av_log(pes->stream, AV_LOG_WARNING, "PES packet size mismatch\n");
         pes->flags |= AV_PKT_FLAG_CORRUPT;
     }
@@ -762,7 +762,8 @@ static int read_sl_header(PESContext *pes, SLConfigDescr *sl, const uint8_t *buf
     if (cts != AV_NOPTS_VALUE)
         pes->pts = cts;
 
-    avpriv_set_pts_info(pes->st, sl->timestamp_len, 1, sl->timestamp_res);
+    if (sl->timestamp_len && sl->timestamp_res)
+        avpriv_set_pts_info(pes->st, sl->timestamp_len, 1, sl->timestamp_res);
 
     return (get_bits_count(&gb) + 7) >> 3;
 }
@@ -948,9 +949,9 @@ static int mpegts_push_data(MpegTSFilter *filter,
              * decreases demuxer delay for infrequent packets like subtitles from
              * a couple of seconds to milliseconds for properly muxed files.
              * total_size is the number of bytes following pes_packet_length
-             * in the pes header, i.e. not counting the first 6 bytes */
+             * in the pes header, i.e. not counting the first PES_START_SIZE bytes */
             if (!ts->stop_parse && pes->total_size < MAX_PES_PAYLOAD &&
-                pes->pes_header_size + pes->data_index == pes->total_size + 6) {
+                pes->pes_header_size + pes->data_index == pes->total_size + PES_START_SIZE) {
                 ts->stop_parse = 1;
                 new_pes_packet(pes, ts->pkt);
             }
@@ -1496,7 +1497,7 @@ static void pmt_cb(MpegTSFilter *filter, const uint8_t *section, int section_len
             if (idx >= 0) {
                 st = ts->stream->streams[idx];
             } else {
-                st = avformat_new_stream(pes->stream, NULL);
+                st = avformat_new_stream(ts->stream, NULL);
                 st->id = pid;
                 st->codec->codec_type = AVMEDIA_TYPE_DATA;
             }
@@ -1939,7 +1940,7 @@ static int mpegts_read_header(AVFormatContext *s,
     if (s->iformat == &ff_mpegts_demuxer) {
         /* normal demux */
 
-        /* first do a scanning to get all the services */
+        /* first do a scan to get all the services */
         /* NOTE: We attempt to seek on non-seekable files as well, as the
          * probe buffer usually is big enough. Only warn if the seek failed
          * on files where the seek should work. */
@@ -2131,7 +2132,7 @@ static int64_t mpegts_get_dts(AVFormatContext *s, int stream_index,
                               int64_t *ppos, int64_t pos_limit)
 {
     MpegTSContext *ts = s->priv_data;
-    int64_t pos, timestamp;
+    int64_t pos;
     pos = ((*ppos  + ts->raw_packet_size - 1 - ts->pos47) / ts->raw_packet_size) * ts->raw_packet_size + ts->pos47;
     ff_read_frame_flush(s);
     if (avio_seek(s->pb, pos, SEEK_SET) < 0)

@@ -192,6 +192,7 @@ static const AVCodecTag nsv_codec_video_tags[] = {
     { CODEC_ID_VP6, MKTAG('V', 'P', '6', '0') },
     { CODEC_ID_VP6, MKTAG('V', 'P', '6', '1') },
     { CODEC_ID_VP6, MKTAG('V', 'P', '6', '2') },
+    { CODEC_ID_VP8, MKTAG('V', 'P', '8', '0') },
 /*
     { CODEC_ID_VP4, MKTAG('V', 'P', '4', ' ') },
     { CODEC_ID_VP4, MKTAG('V', 'P', '4', '0') },
@@ -205,6 +206,7 @@ static const AVCodecTag nsv_codec_audio_tags[] = {
     { CODEC_ID_MP3,       MKTAG('M', 'P', '3', ' ') },
     { CODEC_ID_AAC,       MKTAG('A', 'A', 'C', ' ') },
     { CODEC_ID_AAC,       MKTAG('A', 'A', 'C', 'P') },
+    { CODEC_ID_AAC,       MKTAG('V', 'L', 'B', ' ') },
     { CODEC_ID_SPEEX,     MKTAG('S', 'P', 'X', ' ') },
     { CODEC_ID_PCM_U16LE, MKTAG('P', 'C', 'M', ' ') },
     { CODEC_ID_NONE,      0 },
@@ -312,6 +314,8 @@ static int nsv_parse_NSVf_header(AVFormatContext *s, AVFormatParameters *ap)
         char quote;
 
         p = strings = av_mallocz(strings_size + 1);
+        if (!p)
+            return AVERROR(ENOMEM);
         endp = strings + strings_size;
         avio_read(pb, strings, strings_size);
         while (p < endp) {

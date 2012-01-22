@@ -51,8 +51,7 @@ static int vp8_alloc_frame(VP8Context *s, AVFrame *f)
     int ret;
     if ((ret = ff_thread_get_buffer(s->avctx, f)) < 0)
         return ret;
-    if (s->num_maps_to_be_freed) {
-        assert(!s->maps_are_invalid);
+    if (s->num_maps_to_be_freed && !s->maps_are_invalid) {
         f->ref_index[0] = s->segmentation_maps[--s->num_maps_to_be_freed];
     } else if (!(f->ref_index[0] = av_mallocz(s->mb_width * s->mb_height))) {
         ff_thread_release_buffer(s->avctx, f);
@@ -1562,18 +1561,32 @@ static void release_queued_segmaps(VP8Context *s, int is_close)
     s->maps_are_invalid = 0;
 }
 
+/**
+ * Sets things up for skipping the current frame.
+ * In particular, removes it from the reference buffers.
+ */
+static void skipframe_clear(VP8Context *s)
+{
+    s->invisible = 1;
+    s->next_framep[VP56_FRAME_CURRENT] = NULL;
+    if (s->update_last)
+        s->next_framep[VP56_FRAME_PREVIOUS] = NULL;
+}
+
 static int vp8_decode_frame(AVCodecContext *avctx, void *data, int *data_size,
                             AVPacket *avpkt)
 {
     VP8Context *s = avctx->priv_data;
     int ret, mb_x, mb_y, i, y, referenced;
     enum AVDiscard skip_thresh;
-    AVFrame *av_uninit(curframe), *prev_frame = s->framep[VP56_FRAME_CURRENT];
+    AVFrame *av_uninit(curframe), *prev_frame;
 
     release_queued_segmaps(s, 0);
 
     if ((ret = decode_frame_header(s, avpkt->data, avpkt->size)) < 0)
         return ret;
+
+    prev_frame = s->framep[VP56_FRAME_CURRENT];
 
     referenced = s->update_last || s->update_golden == VP56_FRAME_CURRENT
                                 || s->update_altref == VP56_FRAME_CURRENT;
@@ -1581,10 +1594,6 @@ static int vp8_decode_frame(AVCodecContext *avctx, void *data, int *data_size,
     skip_thresh = !referenced ? AVDISCARD_NONREF :
                     !s->keyframe ? AVDISCARD_NONKEY : AVDISCARD_ALL;
 
-    if (avctx->skip_frame >= skip_thresh) {
-        s->invisible = 1;
-        goto skip_decode;
-    }
     s->deblock_filter = s->filter.level && avctx->skip_loop_filter < skip_thresh;
 
     // release no longer referenced frames
@@ -1609,16 +1618,6 @@ static int vp8_decode_frame(AVCodecContext *avctx, void *data, int *data_size,
         av_log(avctx, AV_LOG_FATAL, "Ran out of free frames!\n");
         abort();
     }
-    if (curframe->data[0])
-        vp8_release_frame(s, curframe, 1, 0);
-
-    curframe->key_frame = s->keyframe;
-    curframe->pict_type = s->keyframe ? AV_PICTURE_TYPE_I : AV_PICTURE_TYPE_P;
-    curframe->reference = referenced ? 3 : 0;
-    if ((ret = vp8_alloc_frame(s, curframe))) {
-        av_log(avctx, AV_LOG_ERROR, "get_buffer() failed!\n");
-        return ret;
-    }
 
     // check if golden and altref are swapped
     if (s->update_altref != VP56_FRAME_NONE) {
@@ -1638,7 +1637,11 @@ static int vp8_decode_frame(AVCodecContext *avctx, void *data, int *data_size,
     }
     s->next_framep[VP56_FRAME_CURRENT]      = curframe;
 
-    ff_thread_finish_setup(avctx);
+    if (avctx->skip_frame >= skip_thresh) {
+        skipframe_clear(s);
+        ret = avpkt->size;
+        goto skip_decode;
+    }
 
     // Given that arithmetic probabilities are updated every frame, it's quite likely
     // that the values we have on a random interframe are complete junk if we didn't
@@ -1647,8 +1650,24 @@ static int vp8_decode_frame(AVCodecContext *avctx, void *data, int *data_size,
                          !s->framep[VP56_FRAME_GOLDEN] ||
                          !s->framep[VP56_FRAME_GOLDEN2])) {
         av_log(avctx, AV_LOG_WARNING, "Discarding interframe without a prior keyframe!\n");
-        return AVERROR_INVALIDDATA;
+        skipframe_clear(s);
+        ret = AVERROR_INVALIDDATA;
+        goto skip_decode;
     }
+
+    if (curframe->data[0])
+        vp8_release_frame(s, curframe, 1, 0);
+
+    curframe->key_frame = s->keyframe;
+    curframe->pict_type = s->keyframe ? AV_PICTURE_TYPE_I : AV_PICTURE_TYPE_P;
+    curframe->reference = referenced ? 3 : 0;
+    if ((ret = vp8_alloc_frame(s, curframe))) {
+        av_log(avctx, AV_LOG_ERROR, "get_buffer() failed!\n");
+        skipframe_clear(s);
+        goto skip_decode;
+    }
+
+    ff_thread_finish_setup(avctx);
 
     s->linesize   = curframe->linesize[0];
     s->uvlinesize = curframe->linesize[1];
@@ -1759,6 +1778,7 @@ static int vp8_decode_frame(AVCodecContext *avctx, void *data, int *data_size,
     }
 
     ff_thread_report_progress(curframe, INT_MAX, 0);
+    ret = avpkt->size;
 skip_decode:
     // if future frames don't use the updated probabilities,
     // reset them to the values we saved
@@ -1772,7 +1792,7 @@ skip_decode:
         *data_size = sizeof(AVFrame);
     }
 
-    return avpkt->size;
+    return ret;
 }
 
 static av_cold int vp8_decode_init(AVCodecContext *avctx)
@@ -1815,6 +1835,7 @@ static int vp8_decode_update_thread_context(AVCodecContext *dst, const AVCodecCo
     if (s->macroblocks_base &&
         (s_src->mb_width != s->mb_width || s_src->mb_height != s->mb_height)) {
         free_buffers(s);
+        s->maps_are_invalid = 1;
     }
 
     s->prob[0] = s_src->prob[!s_src->update_probabilities];

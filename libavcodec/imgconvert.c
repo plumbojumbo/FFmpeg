@@ -109,6 +109,7 @@ static const PixFmtInfo pix_fmt_info[PIX_FMT_NB] = {
 
     /* YUV formats with alpha plane */
     [PIX_FMT_YUVA420P] = {
+        .is_alpha = 1,
         .color_type = FF_COLOR_YUV,
     },
 
@@ -182,6 +183,10 @@ static const PixFmtInfo pix_fmt_info[PIX_FMT_NB] = {
         .color_type = FF_COLOR_GRAY,
     },
     [PIX_FMT_GRAY8] = {
+        .color_type = FF_COLOR_GRAY,
+    },
+    [PIX_FMT_GRAY8A] = {
+        .is_alpha = 1,
         .color_type = FF_COLOR_GRAY,
     },
     [PIX_FMT_MONOWHITE] = {
@@ -885,7 +890,7 @@ static void deinterlace_bottom_field_inplace(uint8_t *src1, int src_wrap,
     uint8_t *src_m1, *src_0, *src_p1, *src_p2;
     int y;
     uint8_t *buf;
-    buf = (uint8_t*)av_malloc(width);
+    buf = av_malloc(width);
 
     src_m1 = src1;
     memcpy(buf,src_m1,width);

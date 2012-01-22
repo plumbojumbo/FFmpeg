@@ -29,7 +29,7 @@
 #include "avlanguage.h"
 #include "libavutil/samplefmt.h"
 #include "libavutil/intreadwrite.h"
-#include "libavutil/intfloat_readwrite.h"
+#include "libavutil/intfloat.h"
 #include "libavutil/mathematics.h"
 #include "libavutil/random_seed.h"
 #include "libavutil/lfg.h"
@@ -185,7 +185,7 @@ static void put_ebml_float(AVIOContext *pb, unsigned int elementid, double val)
 {
     put_ebml_id(pb, elementid);
     put_ebml_num(pb, 8, 0);
-    avio_wb64(pb, av_dbl2int(val));
+    avio_wb64(pb, av_double2int(val));
 }
 
 static void put_ebml_binary(AVIOContext *pb, unsigned int elementid,
@@ -448,7 +448,8 @@ static void get_aac_sample_rates(AVFormatContext *s, AVCodecContext *codec, int 
 {
     MPEG4AudioConfig mp4ac;
 
-    if (avpriv_mpeg4audio_get_config(&mp4ac, codec->extradata, codec->extradata_size) < 0) {
+    if (avpriv_mpeg4audio_get_config(&mp4ac, codec->extradata,
+                                     codec->extradata_size * 8, 1) < 0) {
         av_log(s, AV_LOG_WARNING, "Error parsing AAC extradata, unable to determine samplerate.\n");
         return;
     }

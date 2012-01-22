@@ -20,7 +20,7 @@
  */
 
 #include "libavutil/intreadwrite.h"
-#include "libavutil/intfloat_readwrite.h"
+#include "libavutil/intfloat.h"
 #include "avformat.h"
 #include "internal.h"
 #include "ffm.h"
@@ -137,10 +137,10 @@ static int ffm_write_header(AVFormatContext *s)
             avio_wb32(pb, codec->rc_max_rate);
             avio_wb32(pb, codec->rc_min_rate);
             avio_wb32(pb, codec->rc_buffer_size);
-            avio_wb64(pb, av_dbl2int(codec->i_quant_factor));
-            avio_wb64(pb, av_dbl2int(codec->b_quant_factor));
-            avio_wb64(pb, av_dbl2int(codec->i_quant_offset));
-            avio_wb64(pb, av_dbl2int(codec->b_quant_offset));
+            avio_wb64(pb, av_double2int(codec->i_quant_factor));
+            avio_wb64(pb, av_double2int(codec->b_quant_factor));
+            avio_wb64(pb, av_double2int(codec->i_quant_offset));
+            avio_wb64(pb, av_double2int(codec->b_quant_offset));
             avio_wb32(pb, codec->dct_algo);
             avio_wb32(pb, codec->strict_std_compliance);
             avio_wb32(pb, codec->max_b_frames);
@@ -152,7 +152,7 @@ static int ffm_write_header(AVFormatContext *s)
             avio_wb32(pb, codec->mb_decision);
             avio_wb32(pb, codec->nsse_weight);
             avio_wb32(pb, codec->frame_skip_cmp);
-            avio_wb64(pb, av_dbl2int(codec->rc_buffer_aggressivity));
+            avio_wb64(pb, av_double2int(codec->rc_buffer_aggressivity));
             avio_wb32(pb, codec->codec_tag);
             avio_w8(pb, codec->thread_count);
             avio_wb32(pb, codec->coder_type);
@@ -163,8 +163,8 @@ static int ffm_write_header(AVFormatContext *s)
             avio_wb32(pb, codec->keyint_min);
             avio_wb32(pb, codec->scenechange_threshold);
             avio_wb32(pb, codec->b_frame_strategy);
-            avio_wb64(pb, av_dbl2int(codec->qcompress));
-            avio_wb64(pb, av_dbl2int(codec->qblur));
+            avio_wb64(pb, av_double2int(codec->qcompress));
+            avio_wb64(pb, av_double2int(codec->qblur));
             avio_wb32(pb, codec->max_qdiff);
             avio_wb32(pb, codec->refs);
             avio_wb32(pb, codec->directpred);
@@ -207,7 +207,7 @@ static int ffm_write_packet(AVFormatContext *s, AVPacket *pkt)
     uint8_t header[FRAME_HEADER_SIZE+4];
     int header_size = FRAME_HEADER_SIZE;
 
-    dts = s->timestamp + pkt->dts;
+    dts = pkt->dts;
     /* packet size & key_frame */
     header[0] = pkt->stream_index;
     header[1] = 0;
@@ -215,7 +215,7 @@ static int ffm_write_packet(AVFormatContext *s, AVPacket *pkt)
         header[1] |= FLAG_KEY_FRAME;
     AV_WB24(header+2, pkt->size);
     AV_WB24(header+5, pkt->duration);
-    AV_WB64(header+8, s->timestamp + pkt->pts);
+    AV_WB64(header+8, pkt->pts);
     if (pkt->pts != pkt->dts) {
         header[1] |= FLAG_DTS;
         AV_WB32(header+16, pkt->pts - pkt->dts);
@@ -244,7 +244,6 @@ static int ffm_write_trailer(AVFormatContext *s)
 AVOutputFormat ff_ffm_muxer = {
     .name              = "ffm",
     .long_name         = NULL_IF_CONFIG_SMALL("FFM (FFserver live feed) format"),
-    .mime_type         = "",
     .extensions        = "ffm",
     .priv_data_size    = sizeof(FFMContext),
     .audio_codec       = CODEC_ID_MP2,

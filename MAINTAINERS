@@ -4,6 +4,12 @@ FFmpeg maintainers
 Below is a list of the people maintaining different parts of the
 FFmpeg code.
 
+Please try to keep entries where you are the maintainer upto date!
+
+Names in () mean that the maintainer currently has no time to maintain the code.
+A CC after the name means that the maintainer prefers to be CC-ed on patches
+and related discussions.
+
 
 Project Leader
 ==============
@@ -212,6 +218,7 @@ Codecs:
   tta.c                                 Alex Beregszaszi, Jaikrishnan Menon
   txd.c                                 Ivo van Poorten
   ulti*                                 Kostya Shishkov
+  v410*.c                               Derek Buitenhuis
   vb.c                                  Kostya Shishkov
   vble.c                                Derek Buitenhuis
   vc1*                                  Kostya Shishkov
@@ -378,10 +385,7 @@ x86                                     Michael Niedermayer
 Releases
 ========
 
-0.5                                     *Deprecated/Unmaintained*
-0.6                                     *Deprecated/Unmaintained*
-0.7                                     Michael Niedermayer
-0.8                                     Michael Niedermayer
+0.9                                     Michael Niedermayer
 
 
 

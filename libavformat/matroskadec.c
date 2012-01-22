@@ -22,10 +22,10 @@
 /**
  * @file
  * Matroska file demuxer
- * by Ronald Bultje <rbultje@ronald.bitfreak.net>
- * with a little help from Moritz Bunkus <moritz@bunkus.org>
- * totally reworked by Aurelien Jacobs <aurel@gnuage.org>
- * Specs available on the Matroska project page: http://www.matroska.org/.
+ * @author Ronald Bultje <rbultje@ronald.bitfreak.net>
+ * @author with a little help from Moritz Bunkus <moritz@bunkus.org>
+ * @author totally reworked by Aurelien Jacobs <aurel@gnuage.org>
+ * @see specs available on the Matroska project page: http://www.matroska.org/
  */
 
 #include <stdio.h>
@@ -38,7 +38,7 @@
 #include "rm.h"
 #include "matroska.h"
 #include "libavcodec/mpeg4audio.h"
-#include "libavutil/intfloat_readwrite.h"
+#include "libavutil/intfloat.h"
 #include "libavutil/intreadwrite.h"
 #include "libavutil/avstring.h"
 #include "libavutil/lzo.h"
@@ -652,9 +652,9 @@ static int ebml_read_float(AVIOContext *pb, int size, double *num)
     if (size == 0) {
         *num = 0;
     } else if (size == 4) {
-        *num= av_int2flt(avio_rb32(pb));
-    } else if(size==8){
-        *num= av_int2dbl(avio_rb64(pb));
+        *num = av_int2float(avio_rb32(pb));
+    } else if (size == 8){
+        *num = av_int2double(avio_rb64(pb));
     } else
         return AVERROR_INVALIDDATA;
 
@@ -1223,7 +1223,6 @@ static int matroska_parse_seekhead_entry(MatroskaDemuxContext *matroska, int idx
 static void matroska_execute_seekhead(MatroskaDemuxContext *matroska)
 {
     EbmlList *seekhead_list = &matroska->seekhead;
-    MatroskaSeekhead *seekhead = seekhead_list->elem;
     int64_t before_pos = avio_tell(matroska->ctx->pb);
     int i;
 
@@ -1233,6 +1232,7 @@ static void matroska_execute_seekhead(MatroskaDemuxContext *matroska)
         return;
 
     for (i = 0; i < seekhead_list->nb_elem; i++) {
+        MatroskaSeekhead *seekhead = seekhead_list->elem;
         if (seekhead[i].pos <= before_pos)
             continue;
 

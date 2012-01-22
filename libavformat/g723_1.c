@@ -25,6 +25,7 @@
  */
 
 #include "avformat.h"
+#include "internal.h"
 
 static const uint8_t frame_size[4] = {24, 20, 4, 1};
 
@@ -41,7 +42,7 @@ static int g723_1_init(AVFormatContext *s, AVFormatParameters *ap)
     st->codec->channels    = 1;
     st->codec->sample_rate = 8000;
 
-    av_set_pts_info(st, 64, 1, st->codec->sample_rate);
+    avpriv_set_pts_info(st, 64, 1, st->codec->sample_rate);
 
     return 0;
 }
@@ -72,12 +73,10 @@ static int g723_1_read_packet(AVFormatContext *s, AVPacket *pkt)
 }
 
 AVInputFormat ff_g723_1_demuxer = {
-    "g723_1",
-    NULL_IF_CONFIG_SMALL("G.723.1 format"),
-    0,
-    NULL,
-    g723_1_init,
-    g723_1_read_packet,
+    .name        = "g723_1",
+    .long_name   = NULL_IF_CONFIG_SMALL("G.723.1 format"),
+    .read_header = g723_1_init,
+    .read_packet = g723_1_read_packet,
     .extensions = "tco,rco",
     .flags = AVFMT_GENERIC_INDEX
 };

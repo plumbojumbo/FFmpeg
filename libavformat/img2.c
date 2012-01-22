@@ -85,6 +85,7 @@ static const IdStrMap img_tags[] = {
     { CODEC_ID_SUNRAST   , "im8"},
     { CODEC_ID_SUNRAST   , "im24"},
     { CODEC_ID_SUNRAST   , "sunras"},
+    { CODEC_ID_JPEG2000  , "j2c"},
     { CODEC_ID_JPEG2000  , "j2k"},
     { CODEC_ID_JPEG2000  , "jp2"},
     { CODEC_ID_JPEG2000  , "jpc"},
@@ -284,6 +285,8 @@ static int read_header(AVFormatContext *s1, AVFormatParameters *ap)
         s->split_planes = str && !av_strcasecmp(str + 1, "y");
         st->codec->codec_type = AVMEDIA_TYPE_VIDEO;
         st->codec->codec_id = av_str2id(img_tags, s->path);
+        if (st->codec->codec_id == CODEC_ID_LJPEG)
+            st->codec->codec_id = CODEC_ID_MJPEG;
     }
     if(st->codec->codec_type == AVMEDIA_TYPE_VIDEO && pix_fmt != PIX_FMT_NONE)
         st->codec->pix_fmt = pix_fmt;
@@ -444,7 +447,7 @@ static int write_packet(AVFormatContext *s, AVPacket *pkt)
                      (!st->codec->extradata_size &&
                       AV_RL32(pkt->data+4) != MKTAG('j','P',' ',' '))){ // signature
             error:
-                av_log(s, AV_LOG_ERROR, "malformated jpeg2000 codestream %X\n", AV_RB32(pkt->data));
+                av_log(s, AV_LOG_ERROR, "malformed JPEG 2000 codestream %X\n", AV_RB32(pkt->data));
                 return -1;
             }
         }
@@ -525,7 +528,7 @@ AVOutputFormat ff_image2_muxer = {
     .name           = "image2",
     .long_name      = NULL_IF_CONFIG_SMALL("image2 sequence"),
     .extensions     = "bmp,dpx,jls,jpeg,jpg,ljpg,pam,pbm,pcx,pgm,pgmyuv,png,"
-                      "ppm,sgi,tga,tif,tiff,jp2",
+                      "ppm,sgi,tga,tif,tiff,jp2,j2c",
     .priv_data_size = sizeof(VideoData),
     .video_codec    = CODEC_ID_MJPEG,
     .write_header   = write_header,

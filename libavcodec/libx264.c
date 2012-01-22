@@ -245,7 +245,7 @@ static av_cold int X264_close(AVCodecContext *avctx)
                         "bad value for '%s': '%s'\n", opt, param);            \
             return -1;                                                        \
         }                                                                     \
-    } while (0);
+    } while (0)
 
 static int convert_pix_fmt(enum PixelFormat pix_fmt)
 {
@@ -279,6 +279,7 @@ static int convert_pix_fmt(enum PixelFormat pix_fmt)
 static av_cold int X264_init(AVCodecContext *avctx)
 {
     X264Context *x4 = avctx->priv_data;
+    int sw,sh;
 
     x264_param_default(&x4->params);
 
@@ -507,8 +508,9 @@ static av_cold int X264_init(AVCodecContext *avctx)
 
     x4->params.i_width          = avctx->width;
     x4->params.i_height         = avctx->height;
-    x4->params.vui.i_sar_width  = avctx->sample_aspect_ratio.num;
-    x4->params.vui.i_sar_height = avctx->sample_aspect_ratio.den;
+    av_reduce(&sw, &sh, avctx->sample_aspect_ratio.num, avctx->sample_aspect_ratio.den, 4096);
+    x4->params.vui.i_sar_width  = sw;
+    x4->params.vui.i_sar_height = sh;
     x4->params.i_fps_num = x4->params.i_timebase_den = avctx->time_base.den;
     x4->params.i_fps_den = x4->params.i_timebase_num = avctx->time_base.num;
 
@@ -530,6 +532,9 @@ static av_cold int X264_init(AVCodecContext *avctx)
     // update AVCodecContext with x264 parameters
     avctx->has_b_frames = x4->params.i_bframe ?
         x4->params.i_bframe_pyramid ? 2 : 1 : 0;
+    if (avctx->max_b_frames < 0)
+        avctx->max_b_frames = 0;
+
     avctx->bit_rate = x4->params.rc.i_bitrate*1000;
 #if FF_API_X264_GLOBAL_OPTS
     avctx->crf = x4->params.rc.f_rf_constant;
@@ -694,7 +699,7 @@ AVCodec ff_libx264_encoder = {
     .init           = X264_init,
     .encode         = X264_frame,
     .close          = X264_close,
-    .capabilities   = CODEC_CAP_DELAY,
+    .capabilities   = CODEC_CAP_DELAY | CODEC_CAP_AUTO_THREADS,
     .long_name      = NULL_IF_CONFIG_SMALL("libx264 H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10"),
     .priv_class     = &class,
     .defaults       = x264_defaults,

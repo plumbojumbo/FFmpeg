@@ -322,17 +322,19 @@ static int wsvqa_read_packet(AVFormatContext *s,
     while (avio_read(pb, preamble, VQA_PREAMBLE_SIZE) == VQA_PREAMBLE_SIZE) {
         chunk_type = AV_RB32(&preamble[0]);
         chunk_size = AV_RB32(&preamble[4]);
+
         skip_byte = chunk_size & 0x01;
+
+        if ((chunk_type == SND2_TAG || chunk_type == SND1_TAG) && wsvqa->audio_channels == 0) {
+            av_log(s, AV_LOG_ERROR, "audio chunk without any audio header information found\n");
+            return AVERROR_INVALIDDATA;
+        }
 
         if ((chunk_type == SND1_TAG) || (chunk_type == SND2_TAG) || (chunk_type == VQFR_TAG)) {
 
-            if (av_new_packet(pkt, chunk_size))
+            ret= av_get_packet(pb, pkt, chunk_size);
+            if (ret<0)
                 return AVERROR(EIO);
-            ret = avio_read(pb, pkt->data, chunk_size);
-            if (ret != chunk_size) {
-                av_free_packet(pkt);
-                return AVERROR(EIO);
-            }
 
             if (chunk_type == SND2_TAG) {
                 pkt->stream_index = wsvqa->audio_stream_index;

@@ -470,7 +470,6 @@ static int mms_close(URLContext *h)
     /* free all separately allocated pointers in mms */
     av_free(mms->streams);
     av_free(mms->asf_header);
-    av_freep(&h->priv_data);
 
     return 0;
 }
@@ -502,15 +501,12 @@ static void clear_stream_buffers(MMSContext *mms)
 
 static int mms_open(URLContext *h, const char *uri, int flags)
 {
-    MMSTContext *mmst;
+    MMSTContext *mmst = h->priv_data;
     MMSContext *mms;
     int port, err;
     char tcpname[256];
 
     h->is_streamed = 1;
-    mmst = h->priv_data = av_mallocz(sizeof(MMSTContext));
-    if (!h->priv_data)
-        return AVERROR(ENOMEM);
     mms = &mmst->mms;
 
     // only for MMS over TCP, so set proto = NULL
@@ -610,7 +606,7 @@ static int mms_read(URLContext *h, uint8_t *buf, int size)
                     // copy the data to the packet buffer.
                     result = ff_mms_read_data(mms, buf, size);
                     if (result == 0) {
-                        av_dlog(NULL, "read asf media paket size is zero!\n");
+                        av_dlog(NULL, "Read ASF media packet size is zero!\n");
                         break;
                     }
                 }
@@ -624,8 +620,10 @@ static int mms_read(URLContext *h, uint8_t *buf, int size)
 }
 
 URLProtocol ff_mmst_protocol = {
-    .name      = "mmst",
-    .url_open  = mms_open,
-    .url_read  = mms_read,
-    .url_close = mms_close,
+    .name           = "mmst",
+    .url_open       = mms_open,
+    .url_read       = mms_read,
+    .url_close      = mms_close,
+    .priv_data_size = sizeof(MMSTContext),
+    .flags          = URL_PROTOCOL_FLAG_NETWORK,
 };
