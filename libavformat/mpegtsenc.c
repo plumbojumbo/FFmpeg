@@ -579,11 +579,6 @@ static int mpegts_write_header(AVFormatContext *s)
         service->pcr_pid = ts_st->pid;
     }
 
-#if FF_API_MUXRATE
-    if (s->mux_rate)
-        ts->mux_rate = s->mux_rate;
-#endif
-
     if (ts->mux_rate > 1) {
         service->pcr_packet_period = (ts->mux_rate * PCR_RETRANS_TIME) /
             (TS_PACKET_SIZE * 8 * 1000);
@@ -996,7 +991,7 @@ static int mpegts_write_packet(AVFormatContext *s, AVPacket *pkt)
 
         if (pkt->size < 5 || AV_RB32(pkt->data) != 0x0000001) {
             av_log(s, AV_LOG_ERROR, "H.264 bitstream malformed, "
-                   "no startcode found, use the h264_mp4toannexb bitstream filter\n");
+                   "no startcode found, use the h264_mp4toannexb bitstream filter (-bsf h264_mp4toannexb)\n");
             return AVERROR_INVALIDDATA;
         }
 

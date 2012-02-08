@@ -33,6 +33,7 @@
 #include "dsputil.h"
 #include "mpegvideo.h"
 #include "libavutil/avassert.h"
+#include "libavutil/timecode.h"
 
 #include "mpeg12.h"
 #include "mpeg12data.h"
@@ -2165,15 +2166,11 @@ static void mpeg_decode_gop(AVCodecContext *avctx,
     broken_link = get_bits1(&s->gb);
 
     if (s->avctx->debug & FF_DEBUG_PICT_INFO) {
-        int time_code_hours    = tc>>19 & 0x1f;
-        int time_code_minutes  = tc>>13 & 0x3f;
-        int time_code_seconds  = tc>>6  & 0x3f;
-        int drop_frame_flag    = tc     & 1<<24;
-        int time_code_pictures = tc     & 0x3f;
-        av_log(s->avctx, AV_LOG_DEBUG, "GOP (%02d:%02d:%02d%c%02d) closed_gop=%d broken_link=%d\n",
-               time_code_hours, time_code_minutes, time_code_seconds,
-               drop_frame_flag ? ';' : ':',
-               time_code_pictures, s->closed_gop, broken_link);
+        char tcbuf[AV_TIMECODE_STR_SIZE];
+        av_timecode_make_mpeg_tc_string(tcbuf, tc);
+        av_log(s->avctx, AV_LOG_DEBUG,
+               "GOP (%s) closed_gop=%d broken_link=%d\n",
+               tcbuf, s->closed_gop, broken_link);
     }
 }
 /**
@@ -2216,6 +2213,7 @@ int ff_mpeg1_find_frame_end(ParseContext *pc, const uint8_t *buf, int buf_size, 
                 pc->frame_start_found = 4;
             }
             if (state == SEQ_END_CODE) {
+                pc->frame_start_found = 0;
                 pc->state=-1;
                 return i+1;
             }
@@ -2667,4 +2665,3 @@ AVCodec ff_mpeg1_vdpau_decoder = {
     .long_name      = NULL_IF_CONFIG_SMALL("MPEG-1 video (VDPAU acceleration)"),
 };
 #endif
-
