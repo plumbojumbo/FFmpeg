@@ -391,20 +391,15 @@ static int oma_read_probe(AVProbeData *p)
 
     buf = p->buf;
 
-    if (p->buf_size < ID3v2_HEADER_SIZE ||
-        !ff_id3v2_match(buf, ID3v2_EA3_MAGIC) ||
-        buf[3] != 3 || // version must be 3
-        buf[4]) // flags byte zero
-        return 0;
-
-    tag_len = ff_id3v2_tag_len(buf);
-
-    /* This check cannot overflow as tag_len has at most 28 bits */
-    if (p->buf_size < tag_len + 5)
-        /* EA3 header comes late, might be outside of the probe buffer */
-        return AVPROBE_SCORE_MAX / 2;
-
-    buf += tag_len;
+    /* version must be 3 and flags byte zero */
+    if (ff_id3v2_match(buf, ID3v2_EA3_MAGIC) && buf[3] == 3 && !buf[4]) {
+        tag_len = ff_id3v2_tag_len(buf);
+        /* This check cannot overflow as tag_len has at most 28 bits */
+        if (p->buf_size < tag_len + 5)
+            /* EA3 header comes late, might be outside of the probe buffer */
+            return AVPROBE_SCORE_MAX / 2;
+        buf += tag_len;
+    }
 
     if (!memcmp(buf, "EA3", 3) && !buf[4] && buf[5] == EA3_HEADER_SIZE)
         return AVPROBE_SCORE_MAX;
