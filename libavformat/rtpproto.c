@@ -31,7 +31,6 @@
 #include "rtpdec.h"
 #include "url.h"
 
-#include <unistd.h>
 #include <stdarg.h>
 #include "internal.h"
 #include "network.h"
@@ -40,7 +39,6 @@
 #if HAVE_POLL_H
 #include <sys/poll.h>
 #endif
-#include <sys/time.h>
 
 #define RTP_TX_BUF_SIZE  (64 * 1024)
 #define RTP_RX_BUF_SIZE  (128 * 1024)
@@ -267,7 +265,7 @@ static int rtp_write(URLContext *h, const uint8_t *buf, int size)
     int ret;
     URLContext *hd;
 
-    if (buf[1] >= RTCP_SR && buf[1] <= RTCP_APP) {
+    if (RTP_PT_IS_RTCP(buf[1])) {
         /* RTCP payload type */
         hd = s->rtcp_hd;
     } else {

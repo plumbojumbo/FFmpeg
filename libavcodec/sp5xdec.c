@@ -93,6 +93,7 @@ static int sp5x_decode_frame(AVCodecContext *avctx,
     return i;
 }
 
+#if CONFIG_SP5X_DECODER
 AVCodec ff_sp5x_decoder = {
     .name           = "sp5x",
     .type           = AVMEDIA_TYPE_VIDEO,
@@ -102,10 +103,11 @@ AVCodec ff_sp5x_decoder = {
     .close          = ff_mjpeg_decode_end,
     .decode         = sp5x_decode_frame,
     .capabilities   = CODEC_CAP_DR1,
-    .max_lowres = 3,
-    .long_name = NULL_IF_CONFIG_SMALL("Sunplus JPEG (SP5X)"),
+    .max_lowres     = 3,
+    .long_name      = NULL_IF_CONFIG_SMALL("Sunplus JPEG (SP5X)"),
 };
-
+#endif
+#if CONFIG_AMV_DECODER
 AVCodec ff_amv_decoder = {
     .name           = "amv",
     .type           = AVMEDIA_TYPE_VIDEO,
@@ -114,5 +116,6 @@ AVCodec ff_amv_decoder = {
     .init           = ff_mjpeg_decode_init,
     .close          = ff_mjpeg_decode_end,
     .decode         = sp5x_decode_frame,
-    .long_name = NULL_IF_CONFIG_SMALL("AMV Video"),
+    .long_name      = NULL_IF_CONFIG_SMALL("AMV Video"),
 };
+#endif

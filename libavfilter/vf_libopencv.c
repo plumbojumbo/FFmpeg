@@ -30,6 +30,8 @@
 #include "libavutil/avstring.h"
 #include "libavutil/file.h"
 #include "avfilter.h"
+#include "formats.h"
+#include "video.h"
 
 static void fill_iplimage_from_picref(IplImage *img, const AVFilterBufferRef *picref, enum PixelFormat pixfmt)
 {
@@ -61,7 +63,7 @@ static int query_formats(AVFilterContext *ctx)
         PIX_FMT_BGR24, PIX_FMT_BGRA, PIX_FMT_GRAY8, PIX_FMT_NONE
     };
 
-    avfilter_set_common_pixel_formats(ctx, avfilter_make_format_list(pix_fmts));
+    ff_set_common_formats(ctx, ff_make_format_list(pix_fmts));
     return 0;
 }
 
@@ -69,7 +71,7 @@ static void null_draw_slice(AVFilterLink *link, int y, int h, int slice_dir) { }
 
 typedef struct {
     const char *name;
-    int (*init)(AVFilterContext *ctx, const char *args, void *opaque);
+    int (*init)(AVFilterContext *ctx, const char *args);
     void (*uninit)(AVFilterContext *ctx);
     void (*end_frame_filter)(AVFilterContext *ctx, IplImage *inimg, IplImage *outimg);
     void *priv;
@@ -81,7 +83,7 @@ typedef struct {
     double param3, param4;
 } SmoothContext;
 
-static av_cold int smooth_init(AVFilterContext *ctx, const char *args, void *opaque)
+static av_cold int smooth_init(AVFilterContext *ctx, const char *args)
 {
     OCVContext *ocv = ctx->priv;
     SmoothContext *smooth = ocv->priv;
@@ -119,7 +121,7 @@ static av_cold int smooth_init(AVFilterContext *ctx, const char *args, void *opa
         return AVERROR(EINVAL);
     }
 
-    av_log(ctx, AV_LOG_INFO, "type:%s param1:%d param2:%d param3:%f param4:%f\n",
+    av_log(ctx, AV_LOG_VERBOSE, "type:%s param1:%d param2:%d param3:%f param4:%f\n",
            type_str, smooth->param1, smooth->param2, smooth->param3, smooth->param4);
     return 0;
 }
@@ -237,7 +239,7 @@ static int parse_iplconvkernel(IplConvKernel **kernel, char *buf, void *log_ctx)
     if (!*kernel)
         return AVERROR(ENOMEM);
 
-    av_log(log_ctx, AV_LOG_INFO, "Structuring element: w:%d h:%d x:%d y:%d shape:%s\n",
+    av_log(log_ctx, AV_LOG_VERBOSE, "Structuring element: w:%d h:%d x:%d y:%d shape:%s\n",
            rows, cols, anchor_x, anchor_y, shape_str);
     return 0;
 }
@@ -247,7 +249,7 @@ typedef struct {
     IplConvKernel *kernel;
 } DilateContext;
 
-static av_cold int dilate_init(AVFilterContext *ctx, const char *args, void *opaque)
+static av_cold int dilate_init(AVFilterContext *ctx, const char *args)
 {
     OCVContext *ocv = ctx->priv;
     DilateContext *dilate = ocv->priv;
@@ -267,7 +269,7 @@ static av_cold int dilate_init(AVFilterContext *ctx, const char *args, void *opa
     av_free(kernel_str);
 
     sscanf(buf, ":%d", &dilate->nb_iterations);
-    av_log(ctx, AV_LOG_INFO, "iterations_nb:%d\n", dilate->nb_iterations);
+    av_log(ctx, AV_LOG_VERBOSE, "iterations_nb:%d\n", dilate->nb_iterations);
     if (dilate->nb_iterations <= 0) {
         av_log(ctx, AV_LOG_ERROR, "Invalid non-positive value '%d' for nb_iterations\n",
                dilate->nb_iterations);
@@ -301,7 +303,7 @@ static void erode_end_frame_filter(AVFilterContext *ctx, IplImage *inimg, IplIma
 typedef struct {
     const char *name;
     size_t priv_size;
-    int  (*init)(AVFilterContext *ctx, const char *args, void *opaque);
+    int  (*init)(AVFilterContext *ctx, const char *args);
     void (*uninit)(AVFilterContext *ctx);
     void (*end_frame_filter)(AVFilterContext *ctx, IplImage *inimg, IplImage *outimg);
 } OCVFilterEntry;
@@ -312,7 +314,7 @@ static OCVFilterEntry ocv_filter_entries[] = {
     { "smooth", sizeof(SmoothContext), smooth_init, NULL, smooth_end_frame_filter },
 };
 
-static av_cold int init(AVFilterContext *ctx, const char *args, void *opaque)
+static av_cold int init(AVFilterContext *ctx, const char *args)
 {
     OCVContext *ocv = ctx->priv;
     char name[128], priv_args[1024];
@@ -331,7 +333,7 @@ static av_cold int init(AVFilterContext *ctx, const char *args, void *opaque)
 
             if (!(ocv->priv = av_mallocz(entry->priv_size)))
                 return AVERROR(ENOMEM);
-            return ocv->init(ctx, priv_args, opaque);
+            return ocv->init(ctx, priv_args);
         }
     }
 
@@ -364,8 +366,8 @@ static void end_frame(AVFilterLink *inlink)
     fill_picref_from_iplimage(outpicref, &outimg, inlink->format);
 
     avfilter_unref_buffer(inpicref);
-    avfilter_draw_slice(outlink, 0, outlink->h, 1);
-    avfilter_end_frame(outlink);
+    ff_draw_slice(outlink, 0, outlink->h, 1);
+    ff_end_frame(outlink);
     avfilter_unref_buffer(outpicref);
 }
 

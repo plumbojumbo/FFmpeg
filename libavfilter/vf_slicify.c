@@ -24,6 +24,8 @@
  */
 
 #include "avfilter.h"
+#include "internal.h"
+#include "video.h"
 #include "libavutil/pixdesc.h"
 
 typedef struct {
@@ -33,7 +35,7 @@ typedef struct {
     int use_random_h;   ///< enable the use of random slice height values
 } SliceContext;
 
-static av_cold int init(AVFilterContext *ctx, const char *args, void *opaque)
+static av_cold int init(AVFilterContext *ctx, const char *args)
 {
     SliceContext *slice = ctx->priv;
 
@@ -72,7 +74,7 @@ static void start_frame(AVFilterLink *link, AVFilterBufferRef *picref)
 
     av_log(link->dst, AV_LOG_DEBUG, "h:%d\n", slice->h);
 
-    avfilter_start_frame(link->dst->outputs[0], picref);
+    ff_start_frame(link->dst->outputs[0], picref);
 }
 
 static void draw_slice(AVFilterLink *link, int y, int h, int slice_dir)
@@ -82,16 +84,16 @@ static void draw_slice(AVFilterLink *link, int y, int h, int slice_dir)
 
     if (slice_dir == 1) {
         for (y2 = y; y2 + slice->h <= y + h; y2 += slice->h)
-            avfilter_draw_slice(link->dst->outputs[0], y2, slice->h, slice_dir);
+            ff_draw_slice(link->dst->outputs[0], y2, slice->h, slice_dir);
 
         if (y2 < y + h)
-            avfilter_draw_slice(link->dst->outputs[0], y2, y + h - y2, slice_dir);
+            ff_draw_slice(link->dst->outputs[0], y2, y + h - y2, slice_dir);
     } else if (slice_dir == -1) {
         for (y2 = y + h; y2 - slice->h >= y; y2 -= slice->h)
-            avfilter_draw_slice(link->dst->outputs[0], y2 - slice->h, slice->h, slice_dir);
+            ff_draw_slice(link->dst->outputs[0], y2 - slice->h, slice->h, slice_dir);
 
         if (y2 > y)
-            avfilter_draw_slice(link->dst->outputs[0], y, y2 - y, slice_dir);
+            ff_draw_slice(link->dst->outputs[0], y, y2 - y, slice_dir);
     }
 }
 
@@ -105,11 +107,11 @@ AVFilter avfilter_vf_slicify = {
 
     .inputs    = (const AVFilterPad[]) {{ .name       = "default",
                                     .type             = AVMEDIA_TYPE_VIDEO,
-                                    .get_video_buffer = avfilter_null_get_video_buffer,
+                                    .get_video_buffer = ff_null_get_video_buffer,
                                     .start_frame      = start_frame,
                                     .draw_slice       = draw_slice,
                                     .config_props     = config_props,
-                                    .end_frame        = avfilter_null_end_frame, },
+                                    .end_frame        = ff_null_end_frame, },
                                   { .name = NULL}},
     .outputs   = (const AVFilterPad[]) {{ .name      = "default",
                                     .type            = AVMEDIA_TYPE_VIDEO, },

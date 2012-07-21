@@ -23,6 +23,7 @@
 #include "libavutil/mathematics.h"
 #include "libavutil/tree.h"
 #include "libavutil/dict.h"
+#include "libavutil/avassert.h"
 #include "libavcodec/mpegaudiodata.h"
 #include "nut.h"
 #include "internal.h"
@@ -640,7 +641,7 @@ static int nut_write_header(AVFormatContext *s){
     nut->max_distance = MAX_DISTANCE;
     build_elision_headers(s);
     build_frame_code(s);
-    assert(nut->frame_code['N'].flags == FLAG_INVALID);
+    av_assert0(nut->frame_code['N'].flags == FLAG_INVALID);
 
     avio_write(bc, ID_STRING, strlen(ID_STRING));
     avio_w8(bc, 0);
@@ -703,8 +704,10 @@ static int nut_write_packet(AVFormatContext *s, AVPacket *pkt){
     int store_sp=0;
     int ret;
 
-    if(pkt->pts < 0)
-        return -1;
+    if (pkt->pts < 0) {
+        av_log(s, AV_LOG_ERROR, "Invalid negative packet pts %"PRId64" in input\n", pkt->pts);
+        return AVERROR(EINVAL);
+    }
 
     if(1LL<<(20+3*nut->header_count) <= avio_tell(bc))
         write_headers(s, bc);
@@ -745,7 +748,7 @@ static int nut_write_packet(AVFormatContext *s, AVPacket *pkt){
 
         ff_nut_add_sp(nut, nut->last_syncpoint_pos, 0/*unused*/, pkt->dts);
     }
-    assert(nus->last_pts != AV_NOPTS_VALUE);
+    av_assert0(nus->last_pts != AV_NOPTS_VALUE);
 
     coded_pts = pkt->pts & ((1<<nus->msb_pts_shift)-1);
     if(ff_lsb2full(nus, coded_pts) != pkt->pts)
@@ -809,7 +812,7 @@ static int nut_write_packet(AVFormatContext *s, AVPacket *pkt){
             frame_code=i;
         }
     }
-    assert(frame_code != -1);
+    av_assert0(frame_code != -1);
     fc= &nut->frame_code[frame_code];
     flags= fc->flags;
     needed_flags= get_needed_flags(nut, nus, fc, pkt);
@@ -878,6 +881,9 @@ AVOutputFormat ff_nut_muxer = {
     .write_header   = nut_write_header,
     .write_packet   = nut_write_packet,
     .write_trailer  = nut_write_trailer,
-    .flags = AVFMT_GLOBALHEADER | AVFMT_VARIABLE_FPS,
-    .codec_tag = (const AVCodecTag * const []){ ff_codec_bmp_tags, ff_nut_video_tags, ff_codec_wav_tags, ff_nut_subtitle_tags, 0 },
+    .flags          = AVFMT_GLOBALHEADER | AVFMT_VARIABLE_FPS,
+    .codec_tag      = (const AVCodecTag * const []){
+        ff_codec_bmp_tags, ff_nut_video_tags, ff_codec_wav_tags,
+        ff_nut_subtitle_tags, 0
+    },
 };

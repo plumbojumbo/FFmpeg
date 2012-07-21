@@ -24,13 +24,12 @@
  * MPEG Audio decoder
  */
 
-#define UNCHECKED_BITSTREAM_READER 1
-
 #include "libavutil/audioconvert.h"
 #include "avcodec.h"
 #include "get_bits.h"
 #include "mathops.h"
 #include "mpegaudiodsp.h"
+#include "dsputil.h"
 
 /*
  * TODO:
@@ -42,6 +41,7 @@
 
 #define BACKSTEP_SIZE 512
 #define EXTRABYTES 24
+#define LAST_BUF_SIZE 2 * BACKSTEP_SIZE + EXTRABYTES
 
 /* layer 3 "granule" */
 typedef struct GranuleDef {
@@ -65,7 +65,7 @@ typedef struct GranuleDef {
 
 typedef struct MPADecodeContext {
     MPA_DECODE_HEADER
-    uint8_t last_buf[2 * BACKSTEP_SIZE + EXTRABYTES];
+    uint8_t last_buf[LAST_BUF_SIZE];
     int last_buf_size;
     /* next header (used in free format parsing) */
     uint32_t free_format_next_header;
@@ -81,6 +81,7 @@ typedef struct MPADecodeContext {
     int err_recognition;
     AVCodecContext* avctx;
     MPADSPContext mpadsp;
+    DSPContext dsp;
     AVFrame frame;
 } MPADecodeContext;
 
@@ -173,9 +174,12 @@ static void ff_region_offset2size(GranuleDef *g)
 
 static void ff_init_short_region(MPADecodeContext *s, GranuleDef *g)
 {
-    if (g->block_type == 2)
-        g->region_size[0] = (36 / 2);
-    else {
+    if (g->block_type == 2) {
+        if (s->sample_rate_index != 8)
+            g->region_size[0] = (36 / 2);
+        else
+            g->region_size[0] = (72 / 2);
+    } else {
         if (s->sample_rate_index <= 2)
             g->region_size[0] = (36 / 2);
         else if (s->sample_rate_index != 8)
@@ -200,14 +204,12 @@ static void ff_compute_band_indexes(MPADecodeContext *s, GranuleDef *g)
     if (g->block_type == 2) {
         if (g->switch_point) {
             /* if switched mode, we handle the 36 first samples as
-                long blocks.  For 8000Hz, we handle the 48 first
-                exponents as long blocks (XXX: check this!) */
+                long blocks.  For 8000Hz, we handle the 72 first
+                exponents as long blocks */
             if (s->sample_rate_index <= 2)
                 g->long_end = 8;
-            else if (s->sample_rate_index != 8)
-                g->long_end = 6;
             else
-                g->long_end = 4; /* 8000 Hz */
+                g->long_end = 6;
 
             g->short_start = 2 + (s->sample_rate_index != 8);
         } else {
@@ -303,11 +305,8 @@ static av_cold void decode_init_static(void)
     for (i = 1; i < 16; i++) {
         const HuffTable *h = &mpa_huff_tables[i];
         int xsize, x, y;
-        uint8_t  tmp_bits [512];
-        uint16_t tmp_codes[512];
-
-        memset(tmp_bits , 0, sizeof(tmp_bits ));
-        memset(tmp_codes, 0, sizeof(tmp_codes));
+        uint8_t  tmp_bits [512] = { 0 };
+        uint16_t tmp_codes[512] = { 0 };
 
         xsize = h->xsize;
 
@@ -433,6 +432,7 @@ static av_cold int decode_init(AVCodecContext * avctx)
     s->avctx = avctx;
 
     ff_mpadsp_init(&s->mpadsp);
+    ff_dsputil_init(&s->dsp, avctx);
 
     avctx->sample_fmt= OUT_FMT;
     s->err_recognition = avctx->err_recognition;
@@ -1019,7 +1019,7 @@ static void reorder_block(MPADecodeContext *s, GranuleDef *g)
         if (s->sample_rate_index != 8)
             ptr = g->sb_hybrid + 36;
         else
-            ptr = g->sb_hybrid + 48;
+            ptr = g->sb_hybrid + 72;
     } else {
         ptr = g->sb_hybrid;
     }
@@ -1154,6 +1154,9 @@ found2:
         /* ms stereo ONLY */
         /* NOTE: the 1/sqrt(2) normalization factor is included in the
            global gain */
+#if CONFIG_FLOAT
+       s-> dsp.butterflies_float(g0->sb_hybrid, g1->sb_hybrid, 576);
+#else
         tab0 = g0->sb_hybrid;
         tab1 = g1->sb_hybrid;
         for (i = 0; i < 576; i++) {
@@ -1162,9 +1165,21 @@ found2:
             tab0[i] = tmp0 + tmp1;
             tab1[i] = tmp0 - tmp1;
         }
+#endif
     }
 }
 
+#if CONFIG_FLOAT
+#if HAVE_MIPSFPU
+#   include "mips/compute_antialias_float.h"
+#endif /* HAVE_MIPSFPU */
+#else
+#if HAVE_MIPSDSPR1
+#   include "mips/compute_antialias_fixed.h"
+#endif /* HAVE_MIPSDSPR1 */
+#endif /* CONFIG_FLOAT */
+
+#ifndef compute_antialias
 #if CONFIG_FLOAT
 #define AA(j) do {                                                      \
         float tmp0 = ptr[-1-j];                                         \
@@ -1211,6 +1226,7 @@ static void compute_antialias(MPADecodeContext *s, GranuleDef *g)
         ptr += 18;
     }
 }
+#endif /* compute_antialias */
 
 static void compute_imdct(MPADecodeContext *s, GranuleDef *g,
                           INTFLOAT *sb_samples, INTFLOAT *mdct_buf)
@@ -1378,6 +1394,7 @@ static int mp_decode_layer3(MPADecodeContext *s)
     }
 
     if (!s->adu_mode) {
+        int skip;
         const uint8_t *ptr = s->gb.buffer + (get_bits_count(&s->gb)>>3);
         int extrasize = av_clip(get_bits_left(&s->gb) >> 3, 0, EXTRABYTES);
         assert((get_bits_count(&s->gb) & 7) == 0);
@@ -1389,27 +1406,31 @@ static int mp_decode_layer3(MPADecodeContext *s)
         s->in_gb = s->gb;
         init_get_bits(&s->gb, s->last_buf, s->last_buf_size*8);
 #if !UNCHECKED_BITSTREAM_READER
-        s->gb.size_in_bits_plus8 += extrasize * 8;
+        s->gb.size_in_bits_plus8 += FFMAX(extrasize, LAST_BUF_SIZE - s->last_buf_size) * 8;
 #endif
-        skip_bits_long(&s->gb, 8*(s->last_buf_size - main_data_begin));
+        s->last_buf_size <<= 3;
+        for (gr = 0; gr < nb_granules && (s->last_buf_size >> 3) < main_data_begin; gr++) {
+            for (ch = 0; ch < s->nb_channels; ch++) {
+                g = &s->granules[ch][gr];
+                s->last_buf_size += g->part2_3_length;
+                memset(g->sb_hybrid, 0, sizeof(g->sb_hybrid));
+            }
+        }
+        skip = s->last_buf_size - 8 * main_data_begin;
+        if (skip >= s->gb.size_in_bits && s->in_gb.buffer) {
+            skip_bits_long(&s->in_gb, skip - s->gb.size_in_bits);
+            s->gb           = s->in_gb;
+            s->in_gb.buffer = NULL;
+        } else {
+            skip_bits_long(&s->gb, skip);
+        }
+    } else {
+        gr = 0;
     }
 
-    for (gr = 0; gr < nb_granules; gr++) {
+    for (; gr < nb_granules; gr++) {
         for (ch = 0; ch < s->nb_channels; ch++) {
             g = &s->granules[ch][gr];
-            if (get_bits_count(&s->gb) < 0) {
-                av_log(s->avctx, AV_LOG_DEBUG, "mdb:%d, lastbuf:%d skipping granule %d\n",
-                       main_data_begin, s->last_buf_size, gr);
-                skip_bits_long(&s->gb, g->part2_3_length);
-                memset(g->sb_hybrid, 0, sizeof(g->sb_hybrid));
-                if (get_bits_count(&s->gb) >= s->gb.size_in_bits && s->in_gb.buffer) {
-                    skip_bits_long(&s->in_gb, get_bits_count(&s->gb) - s->gb.size_in_bits);
-                    s->gb           = s->in_gb;
-                    s->in_gb.buffer = NULL;
-                }
-                continue;
-            }
-
             bits_pos = get_bits_count(&s->gb);
 
             if (!s->lsf) {
@@ -1524,7 +1545,7 @@ static int mp_decode_layer3(MPADecodeContext *s)
             huffman_decode(s, g, exponents, bits_pos + g->part2_3_length);
         } /* ch */
 
-        if (s->nb_channels == 2)
+        if (s->mode == MPA_JSTEREO)
             compute_stereo(s, &s->granules[0][gr], &s->granules[1][gr]);
 
         for (ch = 0; ch < s->nb_channels; ch++) {
@@ -1629,10 +1650,19 @@ static int decode_frame(AVCodecContext * avctx, void *data, int *got_frame_ptr,
     uint32_t header;
     int out_size;
 
+    while(buf_size && !*buf){
+        buf++;
+        buf_size--;
+    }
+
     if (buf_size < HEADER_SIZE)
         return AVERROR_INVALIDDATA;
 
     header = AV_RB32(buf);
+    if (header>>8 == AV_RB32("TAG")>>8) {
+        av_log(avctx, AV_LOG_DEBUG, "discarding ID3 tag\n");
+        return buf_size;
+    }
     if (ff_mpa_check_header(header) < 0) {
         av_log(avctx, AV_LOG_ERROR, "Header missing\n");
         return AVERROR_INVALIDDATA;
@@ -1648,7 +1678,6 @@ static int decode_frame(AVCodecContext * avctx, void *data, int *got_frame_ptr,
     avctx->channel_layout = s->nb_channels == 1 ? AV_CH_LAYOUT_MONO : AV_CH_LAYOUT_STEREO;
     if (!avctx->bit_rate)
         avctx->bit_rate = s->bit_rate;
-    avctx->sub_id = s->layer;
 
     if (s->frame_size <= 0 || s->frame_size > buf_size) {
         av_log(avctx, AV_LOG_ERROR, "incomplete frame\n");
@@ -1693,7 +1722,8 @@ static int decode_frame_adu(AVCodecContext *avctx, void *data,
     int buf_size        = avpkt->size;
     MPADecodeContext *s = avctx->priv_data;
     uint32_t header;
-    int len, out_size;
+    int len;
+    int av_unused out_size;
 
     len = buf_size;
 
@@ -1721,11 +1751,14 @@ static int decode_frame_adu(AVCodecContext *avctx, void *data,
     avctx->channels    = s->nb_channels;
     if (!avctx->bit_rate)
         avctx->bit_rate = s->bit_rate;
-    avctx->sub_id = s->layer;
 
     s->frame_size = len;
 
     out_size = mp_decode_frame(s, NULL, buf, buf_size);
+    if (out_size < 0) {
+        av_log(avctx, AV_LOG_ERROR, "Error while decoding MPEG audio frame.\n");
+        return AVERROR_INVALIDDATA;
+    }
 
     *got_frame_ptr   = 1;
     *(AVFrame *)data = s->frame;
@@ -1891,7 +1924,7 @@ static int decode_frame_mp3on4(AVCodecContext *avctx, void *data,
     int fr, j, n, ch, ret;
 
     /* get output buffer */
-    s->frame->nb_samples = MPA_FRAME_SIZE;
+    s->frame->nb_samples = s->frames * MPA_FRAME_SIZE;
     if ((ret = avctx->get_buffer(avctx, s->frame)) < 0) {
         av_log(avctx, AV_LOG_ERROR, "get_buffer() failed\n");
         return ret;
@@ -1914,6 +1947,10 @@ static int decode_frame_mp3on4(AVCodecContext *avctx, void *data,
         m     = s->mp3decctx[fr];
         assert(m != NULL);
 
+        if (fsize < HEADER_SIZE) {
+            av_log(avctx, AV_LOG_ERROR, "Frame size smaller than header size\n");
+            return AVERROR_INVALIDDATA;
+        }
         header = (AV_RB32(buf) & 0x000fffff) | s->syncword; // patch header
 
         if (ff_mpa_check_header(header) < 0) // Bad header, discard block

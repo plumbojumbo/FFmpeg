@@ -3,20 +3,20 @@
  *
  * Copyright (c) 2012 Paul B Mahol
  *
- * This file is part of Libav.
+ * This file is part of FFmpeg.
  *
- * Libav is free software; you can redistribute it and/or
+ * FFmpeg is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
  * version 2.1 of the License, or (at your option) any later version.
  *
- * Libav is distributed in the hope that it will be useful,
+ * FFmpeg is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public
- * License along with Libav; if not, write to the Free Software
+ * License along with FFmpeg; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
@@ -24,6 +24,7 @@
 #include "libavutil/pixdesc.h"
 #include "avcodec.h"
 #include "bytestream.h"
+#include "internal.h"
 #include "xwd.h"
 
 #define WINDOW_NAME         "lavcxwdenc"
@@ -38,16 +39,15 @@ static av_cold int xwd_encode_init(AVCodecContext *avctx)
     return 0;
 }
 
-static int xwd_encode_frame(AVCodecContext *avctx, uint8_t *buf,
-                            int buf_size, void *data)
+static int xwd_encode_frame(AVCodecContext *avctx, AVPacket *pkt,
+                            const AVFrame *p, int *got_packet)
 {
-    AVFrame *p = data;
     enum PixelFormat pix_fmt = avctx->pix_fmt;
     uint32_t pixdepth, bpp, bpad, ncolors = 0, lsize, vclass, be = 0;
-    uint32_t rgb[3] = { 0 };
+    uint32_t rgb[3] = { 0 }, bitorder = 0;
     uint32_t header_size;
-    int i, out_size;
-    uint8_t *ptr;
+    int i, out_size, ret;
+    uint8_t *ptr, *buf;
 
     pixdepth = av_get_bits_per_pixel(&av_pix_fmt_descriptors[pix_fmt]);
     if (av_pix_fmt_descriptors[pix_fmt].flags & PIX_FMT_BE)
@@ -132,7 +132,14 @@ static int xwd_encode_frame(AVCodecContext *avctx, uint8_t *buf,
         bpad     = 8;
         ncolors  = 256;
         break;
+    case PIX_FMT_GRAY8:
+        bpp      = 8;
+        bpad     = 8;
+        vclass   = XWD_STATIC_GRAY;
+        break;
     case PIX_FMT_MONOWHITE:
+        be       = 1;
+        bitorder = 1;
         bpp      = 1;
         bpad     = 8;
         vclass   = XWD_STATIC_GRAY;
@@ -146,10 +153,9 @@ static int xwd_encode_frame(AVCodecContext *avctx, uint8_t *buf,
     header_size = XWD_HEADER_SIZE + WINDOW_NAME_SIZE;
     out_size    = header_size + ncolors * XWD_CMAP_SIZE + avctx->height * lsize;
 
-    if (buf_size < out_size) {
-        av_log(avctx, AV_LOG_ERROR, "output buffer too small\n");
-        return AVERROR(ENOMEM);
-    }
+    if ((ret = ff_alloc_packet2(avctx, pkt, out_size)) < 0)
+        return ret;
+    buf = pkt->data;
 
     avctx->coded_frame->key_frame = 1;
     avctx->coded_frame->pict_type = AV_PICTURE_TYPE_I;
@@ -163,7 +169,7 @@ static int xwd_encode_frame(AVCodecContext *avctx, uint8_t *buf,
     bytestream_put_be32(&buf, 0);             // bitmap x offset
     bytestream_put_be32(&buf, be);            // byte order
     bytestream_put_be32(&buf, 32);            // bitmap unit
-    bytestream_put_be32(&buf, be);            // bit-order of image data
+    bytestream_put_be32(&buf, bitorder);      // bit-order of image data
     bytestream_put_be32(&buf, bpad);          // bitmap scan-line pad in bits
     bytestream_put_be32(&buf, bpp);           // bits per pixel
     bytestream_put_be32(&buf, lsize);         // bytes per scan-line
@@ -204,7 +210,9 @@ static int xwd_encode_frame(AVCodecContext *avctx, uint8_t *buf,
         ptr += p->linesize[0];
     }
 
-    return out_size;
+    pkt->flags |= AV_PKT_FLAG_KEY;
+    *got_packet = 1;
+    return 0;
 }
 
 static av_cold int xwd_encode_close(AVCodecContext *avctx)
@@ -219,7 +227,7 @@ AVCodec ff_xwd_encoder = {
     .type         = AVMEDIA_TYPE_VIDEO,
     .id           = CODEC_ID_XWD,
     .init         = xwd_encode_init,
-    .encode       = xwd_encode_frame,
+    .encode2      = xwd_encode_frame,
     .close        = xwd_encode_close,
     .pix_fmts     = (const enum PixelFormat[]) { PIX_FMT_BGRA,
                                                  PIX_FMT_RGBA,
@@ -240,6 +248,7 @@ AVCodec ff_xwd_encoder = {
                                                  PIX_FMT_RGB4_BYTE,
                                                  PIX_FMT_BGR4_BYTE,
                                                  PIX_FMT_PAL8,
+                                                 PIX_FMT_GRAY8,
                                                  PIX_FMT_MONOWHITE,
                                                  PIX_FMT_NONE },
     .long_name    = NULL_IF_CONFIG_SMALL("XWD (X Window Dump) image"),

@@ -63,6 +63,8 @@ AVCodecParserContext *av_parser_init(int codec_id)
         av_free(s);
         return NULL;
     }
+    s->fetch_timestamp=1;
+    s->pict_type = AV_PICTURE_TYPE_I;
     if (parser->parser_init) {
         ret = parser->parser_init(s);
         if (ret != 0) {
@@ -71,8 +73,6 @@ AVCodecParserContext *av_parser_init(int codec_id)
             return NULL;
         }
     }
-    s->fetch_timestamp=1;
-    s->pict_type = AV_PICTURE_TYPE_I;
     s->key_frame = -1;
     s->convergence_duration = 0;
     s->dts_sync_point       = INT_MIN;
@@ -91,7 +91,7 @@ void ff_fetch_timestamp(AVCodecParserContext *s, int off, int remove){
         if (   s->cur_offset + off >= s->cur_frame_offset[i]
             && (s->frame_offset < s->cur_frame_offset[i] ||
               (!s->frame_offset && !s->next_frame_offset)) // first field/frame
-            //check is disabled  because mpeg-ts doesnt send complete PES packets
+            //check is disabled because mpeg-ts doesn't send complete PES packets
             && /*s->next_frame_offset + off <*/  s->cur_frame_end[i]){
             s->dts= s->cur_frame_dts[i];
             s->pts= s->cur_frame_pts[i];
@@ -285,14 +285,6 @@ void ff_parse_close(AVCodecParserContext *s)
     ParseContext *pc = s->priv_data;
 
     av_freep(&pc->buffer);
-}
-
-void ff_parse1_close(AVCodecParserContext *s)
-{
-    ParseContext1 *pc1 = s->priv_data;
-
-    av_free(pc1->pc.buffer);
-    av_free(pc1->enc);
 }
 
 /*************************/

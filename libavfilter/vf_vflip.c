@@ -25,6 +25,8 @@
 
 #include "libavutil/pixdesc.h"
 #include "avfilter.h"
+#include "internal.h"
+#include "video.h"
 
 typedef struct {
     int vsub;   ///< vertical chroma subsampling
@@ -47,14 +49,14 @@ static AVFilterBufferRef *get_video_buffer(AVFilterLink *link, int perms,
     int i;
 
     if (!(perms & AV_PERM_NEG_LINESIZES))
-        return avfilter_default_get_video_buffer(link, perms, w, h);
+        return ff_default_get_video_buffer(link, perms, w, h);
 
-    picref = avfilter_get_video_buffer(link->dst->outputs[0], perms, w, h);
+    picref = ff_get_video_buffer(link->dst->outputs[0], perms, w, h);
     for (i = 0; i < 4; i ++) {
         int vsub = i == 1 || i == 2 ? flip->vsub : 0;
 
         if (picref->data[i]) {
-            picref->data[i] += ((h >> vsub)-1) * picref->linesize[i];
+            picref->data[i] += (((h + (1<<vsub)-1) >> vsub)-1) * picref->linesize[i];
             picref->linesize[i] = -picref->linesize[i];
         }
     }
@@ -72,19 +74,19 @@ static void start_frame(AVFilterLink *link, AVFilterBufferRef *inpicref)
         int vsub = i == 1 || i == 2 ? flip->vsub : 0;
 
         if (outpicref->data[i]) {
-            outpicref->data[i] += ((link->h >> vsub)-1) * outpicref->linesize[i];
+            outpicref->data[i] += (((link->h + (1<<vsub)-1)>> vsub)-1) * outpicref->linesize[i];
             outpicref->linesize[i] = -outpicref->linesize[i];
         }
     }
 
-    avfilter_start_frame(link->dst->outputs[0], outpicref);
+    ff_start_frame(link->dst->outputs[0], outpicref);
 }
 
 static void draw_slice(AVFilterLink *link, int y, int h, int slice_dir)
 {
     AVFilterContext *ctx = link->dst;
 
-    avfilter_draw_slice(ctx->outputs[0], link->h - (y+h), h, -1 * slice_dir);
+    ff_draw_slice(ctx->outputs[0], link->h - (y+h), h, -1 * slice_dir);
 }
 
 AVFilter avfilter_vf_vflip = {

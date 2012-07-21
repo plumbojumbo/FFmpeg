@@ -35,8 +35,18 @@
 #include "libavutil/opt.h"
 #include "libavutil/imgutils.h"
 #include "libavformat/avformat.h"
+#include "audio.h"
 #include "avcodec.h"
 #include "avfilter.h"
+#include "formats.h"
+#include "internal.h"
+#include "video.h"
+
+typedef enum {
+    STATE_DECODING,
+    STATE_FLUSHING,
+    STATE_DONE,
+} MovieState;
 
 typedef struct {
     /* common A/V fields */
@@ -46,10 +56,11 @@ typedef struct {
     char *format_name;
     char *file_name;
     int stream_index;
+    int loop_count;
 
     AVFormatContext *format_ctx;
     AVCodecContext *codec_ctx;
-    int is_done;
+    MovieState state;
     AVFrame *frame;   ///< video frame to store the decoded images in
 
     /* video-only fields */
@@ -71,21 +82,13 @@ static const AVOption movie_options[]= {
 {"si",           "set stream index",        OFFSET(stream_index), AV_OPT_TYPE_INT,    {.dbl = -1},  -1,       INT_MAX  },
 {"seek_point",   "set seekpoint (seconds)", OFFSET(seek_point_d), AV_OPT_TYPE_DOUBLE, {.dbl =  0},  0,        (INT64_MAX-1) / 1000000 },
 {"sp",           "set seekpoint (seconds)", OFFSET(seek_point_d), AV_OPT_TYPE_DOUBLE, {.dbl =  0},  0,        (INT64_MAX-1) / 1000000 },
+{"loop",         "set loop count",          OFFSET(loop_count),   AV_OPT_TYPE_INT,    {.dbl =  1},  0,        INT_MAX  },
 {NULL},
 };
 
-static const char *movie_get_name(void *ctx)
-{
-    return "movie";
-}
+AVFILTER_DEFINE_CLASS(movie);
 
-static const AVClass movie_class = {
-    "MovieContext",
-    movie_get_name,
-    movie_options
-};
-
-static av_cold int movie_common_init(AVFilterContext *ctx, const char *args, void *opaque,
+static av_cold int movie_common_init(AVFilterContext *ctx, const char *args,
                                      enum AVMediaType type)
 {
     MovieContext *movie = ctx->priv;
@@ -170,7 +173,7 @@ static av_cold int movie_common_init(AVFilterContext *ctx, const char *args, voi
         return ret;
     }
 
-    av_log(ctx, AV_LOG_INFO, "seek_point:%"PRIi64" format_name:%s file_name:%s stream_index:%d\n",
+    av_log(ctx, AV_LOG_VERBOSE, "seek_point:%"PRIi64" format_name:%s file_name:%s stream_index:%d\n",
            movie->seek_point, movie->format_name, movie->file_name,
            movie->stream_index);
 
@@ -201,12 +204,12 @@ static av_cold void movie_common_uninit(AVFilterContext *ctx)
 
 #if CONFIG_MOVIE_FILTER
 
-static av_cold int movie_init(AVFilterContext *ctx, const char *args, void *opaque)
+static av_cold int movie_init(AVFilterContext *ctx, const char *args)
 {
     MovieContext *movie = ctx->priv;
     int ret;
 
-    if ((ret = movie_common_init(ctx, args, opaque, AVMEDIA_TYPE_VIDEO)) < 0)
+    if ((ret = movie_common_init(ctx, args, AVMEDIA_TYPE_VIDEO)) < 0)
         return ret;
 
     movie->w = movie->codec_ctx->width;
@@ -220,7 +223,7 @@ static int movie_query_formats(AVFilterContext *ctx)
     MovieContext *movie = ctx->priv;
     enum PixelFormat pix_fmts[] = { movie->codec_ctx->pix_fmt, PIX_FMT_NONE };
 
-    avfilter_set_common_pixel_formats(ctx, avfilter_make_format_list(pix_fmts));
+    ff_set_common_formats(ctx, ff_make_format_list(pix_fmts));
     return 0;
 }
 
@@ -239,21 +242,41 @@ static int movie_get_frame(AVFilterLink *outlink)
 {
     MovieContext *movie = outlink->src->priv;
     AVPacket pkt;
-    int ret, frame_decoded;
+    int ret = 0, frame_decoded;
     AVStream *st = movie->format_ctx->streams[movie->stream_index];
 
-    if (movie->is_done == 1)
+    if (movie->state == STATE_DONE)
         return 0;
 
-    while ((ret = av_read_frame(movie->format_ctx, &pkt)) >= 0) {
+    while (1) {
+        if (movie->state == STATE_DECODING) {
+            ret = av_read_frame(movie->format_ctx, &pkt);
+            if (ret == AVERROR_EOF) {
+                int64_t timestamp;
+                if (movie->loop_count != 1) {
+                    timestamp = movie->seek_point;
+                    if (movie->format_ctx->start_time != AV_NOPTS_VALUE)
+                        timestamp += movie->format_ctx->start_time;
+                    if (av_seek_frame(movie->format_ctx, -1, timestamp, AVSEEK_FLAG_BACKWARD) < 0) {
+                        movie->state = STATE_FLUSHING;
+                    } else if (movie->loop_count>1)
+                        movie->loop_count--;
+                    continue;
+                } else {
+                    movie->state = STATE_FLUSHING;
+                }
+            } else if (ret < 0)
+                break;
+        }
+
         // Is this a packet from the video stream?
-        if (pkt.stream_index == movie->stream_index) {
+        if (pkt.stream_index == movie->stream_index || movie->state == STATE_FLUSHING) {
             avcodec_decode_video2(movie->codec_ctx, movie->frame, &frame_decoded, &pkt);
 
             if (frame_decoded) {
                 /* FIXME: avoid the memcpy */
-                movie->picref = avfilter_get_video_buffer(outlink, AV_PERM_WRITE | AV_PERM_PRESERVE |
-                                                          AV_PERM_REUSE2, outlink->w, outlink->h);
+                movie->picref = ff_get_video_buffer(outlink, AV_PERM_WRITE | AV_PERM_PRESERVE |
+                                                    AV_PERM_REUSE2, outlink->w, outlink->h);
                 av_image_copy(movie->picref->data, movie->picref->linesize,
                               (void*)movie->frame->data,  movie->frame->linesize,
                               movie->picref->format, outlink->w, outlink->h);
@@ -278,16 +301,16 @@ static int movie_get_frame(AVFilterLink *outlink)
                 av_free_packet(&pkt);
 
                 return 0;
+            } else if (movie->state == STATE_FLUSHING) {
+                movie->state = STATE_DONE;
+                av_free_packet(&pkt);
+                return AVERROR_EOF;
             }
         }
         // Free the packet that was allocated by av_read_frame
         av_free_packet(&pkt);
     }
 
-    // On multi-frame source we should stop the mixing process when
-    // the movie source does not have more frames
-    if (ret == AVERROR_EOF)
-        movie->is_done = 1;
     return ret;
 }
 
@@ -297,15 +320,15 @@ static int movie_request_frame(AVFilterLink *outlink)
     MovieContext *movie = outlink->src->priv;
     int ret;
 
-    if (movie->is_done)
+    if (movie->state == STATE_DONE)
         return AVERROR_EOF;
     if ((ret = movie_get_frame(outlink)) < 0)
         return ret;
 
     outpicref = avfilter_ref_buffer(movie->picref, ~0);
-    avfilter_start_frame(outlink, outpicref);
-    avfilter_draw_slice(outlink, 0, outlink->h, 1);
-    avfilter_end_frame(outlink);
+    ff_start_frame(outlink, outpicref);
+    ff_draw_slice(outlink, 0, outlink->h, 1);
+    ff_end_frame(outlink);
     avfilter_unref_buffer(movie->picref);
     movie->picref = NULL;
 
@@ -332,12 +355,12 @@ AVFilter avfilter_vsrc_movie = {
 
 #if CONFIG_AMOVIE_FILTER
 
-static av_cold int amovie_init(AVFilterContext *ctx, const char *args, void *opaque)
+static av_cold int amovie_init(AVFilterContext *ctx, const char *args)
 {
     MovieContext *movie = ctx->priv;
     int ret;
 
-    if ((ret = movie_common_init(ctx, args, opaque, AVMEDIA_TYPE_AUDIO)) < 0)
+    if ((ret = movie_common_init(ctx, args, AVMEDIA_TYPE_AUDIO)) < 0)
         return ret;
 
     movie->bps = av_get_bytes_per_sample(movie->codec_ctx->sample_fmt);
@@ -350,13 +373,13 @@ static int amovie_query_formats(AVFilterContext *ctx)
     AVCodecContext *c = movie->codec_ctx;
 
     enum AVSampleFormat sample_fmts[] = { c->sample_fmt, -1 };
-    int packing_fmts[] = { AVFILTER_PACKED, -1 };
+    int sample_rates[] = { c->sample_rate, -1 };
     int64_t chlayouts[] = { c->channel_layout ? c->channel_layout :
                             av_get_default_channel_layout(c->channels), -1 };
 
-    avfilter_set_common_sample_formats (ctx, avfilter_make_format_list(sample_fmts));
-    avfilter_set_common_packing_formats(ctx, avfilter_make_format_list(packing_fmts));
-    avfilter_set_common_channel_layouts(ctx, avfilter_make_format64_list(chlayouts));
+    ff_set_common_formats        (ctx, ff_make_format_list(sample_fmts));
+    ff_set_common_samplerates    (ctx, ff_make_format_list(sample_rates));
+    ff_set_common_channel_layouts(ctx, avfilter_make_format64_list(chlayouts));
 
     return 0;
 }
@@ -378,7 +401,7 @@ static int amovie_get_samples(AVFilterLink *outlink)
     AVPacket pkt;
     int ret, got_frame = 0;
 
-    if (!movie->pkt.size && movie->is_done == 1)
+    if (!movie->pkt.size && movie->state == STATE_DONE)
         return AVERROR_EOF;
 
     /* check for another frame, in case the previous one was completely consumed */
@@ -395,7 +418,7 @@ static int amovie_get_samples(AVFilterLink *outlink)
         }
 
         if (ret == AVERROR_EOF) {
-            movie->is_done = 1;
+            movie->state = STATE_DONE;
             return ret;
         }
     }
@@ -419,7 +442,7 @@ static int amovie_get_samples(AVFilterLink *outlink)
         if (data_size < 0)
             return data_size;
         movie->samplesref =
-            avfilter_get_audio_buffer(outlink, AV_PERM_WRITE, nb_samples);
+            ff_get_audio_buffer(outlink, AV_PERM_WRITE, nb_samples);
         memcpy(movie->samplesref->data[0], movie->frame->data[0], data_size);
         movie->samplesref->pts = movie->pkt.pts;
         movie->samplesref->pos = movie->pkt.pos;
@@ -438,14 +461,14 @@ static int amovie_request_frame(AVFilterLink *outlink)
     MovieContext *movie = outlink->src->priv;
     int ret;
 
-    if (movie->is_done)
+    if (movie->state == STATE_DONE)
         return AVERROR_EOF;
     do {
         if ((ret = amovie_get_samples(outlink)) < 0)
             return ret;
     } while (!movie->samplesref);
 
-    avfilter_filter_samples(outlink, avfilter_ref_buffer(movie->samplesref, ~0));
+    ff_filter_samples(outlink, avfilter_ref_buffer(movie->samplesref, ~0));
     avfilter_unref_buffer(movie->samplesref);
     movie->samplesref = NULL;
 

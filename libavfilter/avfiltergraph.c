@@ -24,13 +24,32 @@
 #include <string.h>
 
 #include "libavutil/audioconvert.h"
+#include "libavutil/avassert.h"
+#include "libavutil/pixdesc.h"
+#include "libavcodec/avcodec.h" // avcodec_find_best_pix_fmt2()
 #include "avfilter.h"
 #include "avfiltergraph.h"
+#include "formats.h"
 #include "internal.h"
+
+#include "libavutil/audioconvert.h"
+#include "libavutil/avassert.h"
+#include "libavutil/log.h"
+
+static const AVClass filtergraph_class = {
+    .class_name = "AVFilterGraph",
+    .item_name  = av_default_item_name,
+    .version    = LIBAVUTIL_VERSION_INT,
+    .category   = AV_CLASS_CATEGORY_FILTER,
+};
 
 AVFilterGraph *avfilter_graph_alloc(void)
 {
-    return av_mallocz(sizeof(AVFilterGraph));
+    AVFilterGraph *ret = av_mallocz(sizeof(AVFilterGraph));
+    if (!ret)
+        return NULL;
+    ret->av_class = &filtergraph_class;
+    return ret;
 }
 
 void avfilter_graph_free(AVFilterGraph **graph)
@@ -39,6 +58,7 @@ void avfilter_graph_free(AVFilterGraph **graph)
         return;
     for (; (*graph)->filter_count > 0; (*graph)->filter_count--)
         avfilter_free((*graph)->filters[(*graph)->filter_count - 1]);
+    av_freep(&(*graph)->sink_links);
     av_freep(&(*graph)->scale_sws_opts);
     av_freep(&(*graph)->filters);
     av_freep(graph);
@@ -78,7 +98,20 @@ fail:
     return ret;
 }
 
-int ff_avfilter_graph_check_validity(AVFilterGraph *graph, AVClass *log_ctx)
+void avfilter_graph_set_auto_convert(AVFilterGraph *graph, unsigned flags)
+{
+    graph->disable_auto_convert = flags;
+}
+
+/**
+ * Check for the validity of graph.
+ *
+ * A graph is considered valid if all its input and output pads are
+ * connected.
+ *
+ * @return 0 in case of success, a negative value otherwise
+ */
+static int graph_check_validity(AVFilterGraph *graph, AVClass *log_ctx)
 {
     AVFilterContext *filt;
     int i, j;
@@ -86,7 +119,7 @@ int ff_avfilter_graph_check_validity(AVFilterGraph *graph, AVClass *log_ctx)
     for (i = 0; i < graph->filter_count; i++) {
         filt = graph->filters[i];
 
-        for (j = 0; j < filt->input_count; j++) {
+        for (j = 0; j < filt->nb_inputs; j++) {
             if (!filt->inputs[j] || !filt->inputs[j]->src) {
                 av_log(log_ctx, AV_LOG_ERROR,
                        "Input pad \"%s\" for the filter \"%s\" of type \"%s\" not connected to any source\n",
@@ -95,7 +128,7 @@ int ff_avfilter_graph_check_validity(AVFilterGraph *graph, AVClass *log_ctx)
             }
         }
 
-        for (j = 0; j < filt->output_count; j++) {
+        for (j = 0; j < filt->nb_outputs; j++) {
             if (!filt->outputs[j] || !filt->outputs[j]->dst) {
                 av_log(log_ctx, AV_LOG_ERROR,
                        "Output pad \"%s\" for the filter \"%s\" of type \"%s\" not connected to any destination\n",
@@ -108,7 +141,12 @@ int ff_avfilter_graph_check_validity(AVFilterGraph *graph, AVClass *log_ctx)
     return 0;
 }
 
-int ff_avfilter_graph_config_links(AVFilterGraph *graph, AVClass *log_ctx)
+/**
+ * Configure all the links of graphctx.
+ *
+ * @return 0 in case of success, a negative value otherwise
+ */
+static int graph_config_links(AVFilterGraph *graph, AVClass *log_ctx)
 {
     AVFilterContext *filt;
     int i, ret;
@@ -116,7 +154,7 @@ int ff_avfilter_graph_config_links(AVFilterGraph *graph, AVClass *log_ctx)
     for (i=0; i < graph->filter_count; i++) {
         filt = graph->filters[i];
 
-        if (!filt->output_count) {
+        if (!filt->nb_outputs) {
             if ((ret = avfilter_config_links(filt)))
                 return ret;
         }
@@ -136,12 +174,50 @@ AVFilterContext *avfilter_graph_get_filter(AVFilterGraph *graph, char *name)
     return NULL;
 }
 
+static int filter_query_formats(AVFilterContext *ctx)
+{
+    int ret;
+    AVFilterFormats *formats;
+    AVFilterChannelLayouts *chlayouts;
+    AVFilterFormats *samplerates;
+    enum AVMediaType type = ctx->inputs  && ctx->inputs [0] ? ctx->inputs [0]->type :
+                            ctx->outputs && ctx->outputs[0] ? ctx->outputs[0]->type :
+                            AVMEDIA_TYPE_VIDEO;
+
+    if ((ret = ctx->filter->query_formats(ctx)) < 0)
+        return ret;
+
+    formats = ff_all_formats(type);
+    if (!formats)
+        return AVERROR(ENOMEM);
+    ff_set_common_formats(ctx, formats);
+    if (type == AVMEDIA_TYPE_AUDIO) {
+        samplerates = ff_all_samplerates();
+        if (!samplerates)
+            return AVERROR(ENOMEM);
+        ff_set_common_samplerates(ctx, samplerates);
+        chlayouts = ff_all_channel_layouts();
+        if (!chlayouts)
+            return AVERROR(ENOMEM);
+        ff_set_common_channel_layouts(ctx, chlayouts);
+    }
+    return 0;
+}
+
 static int insert_conv_filter(AVFilterGraph *graph, AVFilterLink *link,
                               const char *filt_name, const char *filt_args)
 {
     static int auto_count = 0, ret;
     char inst_name[32];
     AVFilterContext *filt_ctx;
+
+    if (graph->disable_auto_convert) {
+        av_log(NULL, AV_LOG_ERROR,
+               "The filters '%s' and '%s' do not have a common format "
+               "and automatic conversion is disabled.\n",
+               link->src->name, link->dst->name);
+        return AVERROR(EINVAL);
+    }
 
     snprintf(inst_name, sizeof(inst_name), "auto-inserted %s %d",
             filt_name, auto_count++);
@@ -153,12 +229,12 @@ static int insert_conv_filter(AVFilterGraph *graph, AVFilterLink *link,
     if ((ret = avfilter_insert_filter(link, filt_ctx, 0, 0)) < 0)
         return ret;
 
-    filt_ctx->filter->query_formats(filt_ctx);
+    filter_query_formats(filt_ctx);
 
     if ( ((link = filt_ctx-> inputs[0]) &&
-           !avfilter_merge_formats(link->in_formats, link->out_formats)) ||
+           !ff_merge_formats(link->in_formats, link->out_formats)) ||
          ((link = filt_ctx->outputs[0]) &&
-           !avfilter_merge_formats(link->in_formats, link->out_formats))
+           !ff_merge_formats(link->in_formats, link->out_formats))
        ) {
         av_log(NULL, AV_LOG_ERROR,
                "Impossible to convert between the formats supported by the filter "
@@ -168,14 +244,12 @@ static int insert_conv_filter(AVFilterGraph *graph, AVFilterLink *link,
 
     if (link->type == AVMEDIA_TYPE_AUDIO &&
          (((link = filt_ctx-> inputs[0]) &&
-           (!avfilter_merge_formats(link->in_chlayouts, link->out_chlayouts) ||
-            !avfilter_merge_formats(link->in_packing,   link->out_packing))) ||
+           !ff_merge_channel_layouts(link->in_channel_layouts, link->out_channel_layouts)) ||
          ((link = filt_ctx->outputs[0]) &&
-           (!avfilter_merge_formats(link->in_chlayouts, link->out_chlayouts) ||
-            !avfilter_merge_formats(link->in_packing,   link->out_packing))))
+           !ff_merge_channel_layouts(link->in_channel_layouts, link->out_channel_layouts)))
        ) {
         av_log(NULL, AV_LOG_ERROR,
-               "Impossible to convert between the channel layouts/packing formats supported by the filter "
+               "Impossible to convert between the channel layouts formats supported by the filter "
                "'%s' and the filter '%s'\n", link->src->name, link->dst->name);
         return AVERROR(EINVAL);
     }
@@ -187,28 +261,42 @@ static int query_formats(AVFilterGraph *graph, AVClass *log_ctx)
 {
     int i, j, ret;
     char filt_args[128];
+    AVFilterFormats *formats;
+    AVFilterChannelLayouts *chlayouts;
+    AVFilterFormats *samplerates;
+    int scaler_count = 0, resampler_count = 0;
 
+    for (j = 0; j < 2; j++) {
     /* ask all the sub-filters for their supported media formats */
     for (i = 0; i < graph->filter_count; i++) {
+        /* Call query_formats on sources first.
+           This is a temporary workaround for amerge,
+           until format renegociation is implemented. */
+        if (!graph->filters[i]->nb_inputs == j)
+            continue;
         if (graph->filters[i]->filter->query_formats)
-            graph->filters[i]->filter->query_formats(graph->filters[i]);
+            ret = filter_query_formats(graph->filters[i]);
         else
-            avfilter_default_query_formats(graph->filters[i]);
+            ret = ff_default_query_formats(graph->filters[i]);
+        if (ret < 0)
+            return ret;
+    }
     }
 
     /* go through and merge as many format lists as possible */
     for (i = 0; i < graph->filter_count; i++) {
         AVFilterContext *filter = graph->filters[i];
 
-        for (j = 0; j < filter->input_count; j++) {
+        for (j = 0; j < filter->nb_inputs; j++) {
             AVFilterLink *link = filter->inputs[j];
+#if 0
             if (!link) continue;
 
             if (!link->in_formats || !link->out_formats)
                 return AVERROR(EINVAL);
 
             if (link->type == AVMEDIA_TYPE_VIDEO &&
-                !avfilter_merge_formats(link->in_formats, link->out_formats)) {
+                !ff_merge_formats(link->in_formats, link->out_formats)) {
 
                 /* couldn't merge format lists, auto-insert scale filter */
                 snprintf(filt_args, sizeof(filt_args), "0:0:%s",
@@ -217,15 +305,110 @@ static int query_formats(AVFilterGraph *graph, AVClass *log_ctx)
                     return ret;
             }
             else if (link->type == AVMEDIA_TYPE_AUDIO) {
-                if (!link->in_chlayouts || !link->out_chlayouts ||
-                    !link->in_packing   || !link->out_packing)
+                if (!link->in_channel_layouts || !link->out_channel_layouts)
                     return AVERROR(EINVAL);
 
-                if (!avfilter_merge_formats(link->in_formats,   link->out_formats)   ||
-                    !avfilter_merge_formats(link->in_chlayouts, link->out_chlayouts) ||
-                    !avfilter_merge_formats(link->in_packing,   link->out_packing))
-                    if (ret = insert_conv_filter(graph, link, "aconvert", NULL))
+                /* Merge all three list before checking: that way, in all
+                 * three categories, aconvert will use a common format
+                 * whenever possible. */
+                formats     = ff_merge_formats(link->in_formats,   link->out_formats);
+                chlayouts   = ff_merge_channel_layouts(link->in_channel_layouts  , link->out_channel_layouts);
+                samplerates = ff_merge_samplerates    (link->in_samplerates, link->out_samplerates);
+
+                if (!formats || !chlayouts || !samplerates)
+                    if (ret = insert_conv_filter(graph, link, "aresample", NULL))
                        return ret;
+#else
+            int convert_needed = 0;
+
+            if (!link)
+                continue;
+
+            if (link->in_formats != link->out_formats &&
+                !ff_merge_formats(link->in_formats,
+                                        link->out_formats))
+                convert_needed = 1;
+            if (link->type == AVMEDIA_TYPE_AUDIO) {
+                if (link->in_channel_layouts != link->out_channel_layouts &&
+                    !ff_merge_channel_layouts(link->in_channel_layouts,
+                                              link->out_channel_layouts))
+                    convert_needed = 1;
+                if (link->in_samplerates != link->out_samplerates &&
+                    !ff_merge_samplerates(link->in_samplerates,
+                                          link->out_samplerates))
+                    convert_needed = 1;
+            }
+
+            if (convert_needed) {
+                AVFilterContext *convert;
+                AVFilter *filter;
+                AVFilterLink *inlink, *outlink;
+                char scale_args[256];
+                char inst_name[30];
+
+                /* couldn't merge format lists. auto-insert conversion filter */
+                switch (link->type) {
+                case AVMEDIA_TYPE_VIDEO:
+                    if (!(filter = avfilter_get_by_name("scale"))) {
+                        av_log(log_ctx, AV_LOG_ERROR, "'scale' filter "
+                               "not present, cannot convert pixel formats.\n");
+                        return AVERROR(EINVAL);
+                    }
+
+                    snprintf(inst_name, sizeof(inst_name), "auto-inserted scaler %d",
+                             scaler_count++);
+                    snprintf(scale_args, sizeof(scale_args), "0:0:%s", graph->scale_sws_opts);
+                    if ((ret = avfilter_graph_create_filter(&convert, filter,
+                                                            inst_name, scale_args, NULL,
+                                                            graph)) < 0)
+                        return ret;
+                    break;
+                case AVMEDIA_TYPE_AUDIO:
+                    if (!(filter = avfilter_get_by_name("aresample"))) {
+                        av_log(log_ctx, AV_LOG_ERROR, "'aresample' filter "
+                               "not present, cannot convert audio formats.\n");
+                        return AVERROR(EINVAL);
+                    }
+
+                    snprintf(inst_name, sizeof(inst_name), "auto-inserted resampler %d",
+                             resampler_count++);
+                    if ((ret = avfilter_graph_create_filter(&convert, filter,
+                                                            inst_name, NULL, NULL, graph)) < 0)
+                        return ret;
+                    break;
+                default:
+                    return AVERROR(EINVAL);
+                }
+
+                if ((ret = avfilter_insert_filter(link, convert, 0, 0)) < 0)
+                    return ret;
+
+                filter_query_formats(convert);
+                inlink  = convert->inputs[0];
+                outlink = convert->outputs[0];
+                if (!ff_merge_formats( inlink->in_formats,  inlink->out_formats) ||
+                    !ff_merge_formats(outlink->in_formats, outlink->out_formats))
+                    ret |= AVERROR(ENOSYS);
+                if (inlink->type == AVMEDIA_TYPE_AUDIO &&
+                    (!ff_merge_samplerates(inlink->in_samplerates,
+                                           inlink->out_samplerates) ||
+                     !ff_merge_channel_layouts(inlink->in_channel_layouts,
+                                               inlink->out_channel_layouts)))
+                    ret |= AVERROR(ENOSYS);
+                if (outlink->type == AVMEDIA_TYPE_AUDIO &&
+                    (!ff_merge_samplerates(outlink->in_samplerates,
+                                           outlink->out_samplerates) ||
+                     !ff_merge_channel_layouts(outlink->in_channel_layouts,
+                                               outlink->out_channel_layouts)))
+                    ret |= AVERROR(ENOSYS);
+
+                if (ret < 0) {
+                    av_log(log_ctx, AV_LOG_ERROR,
+                           "Impossible to convert between the formats supported by the filter "
+                           "'%s' and the filter '%s'\n", link->src->name, link->dst->name);
+                    return ret;
+                }
+#endif
             }
         }
     }
@@ -233,44 +416,343 @@ static int query_formats(AVFilterGraph *graph, AVClass *log_ctx)
     return 0;
 }
 
-static void pick_format(AVFilterLink *link)
+static int pick_format(AVFilterLink *link, AVFilterLink *ref)
 {
     if (!link || !link->in_formats)
-        return;
+        return 0;
+
+    if (link->type == AVMEDIA_TYPE_VIDEO) {
+        if(ref && ref->type == AVMEDIA_TYPE_VIDEO){
+            int has_alpha= av_pix_fmt_descriptors[ref->format].nb_components % 2 == 0;
+            enum PixelFormat best= PIX_FMT_NONE;
+            int i;
+            for (i=0; i<link->in_formats->format_count; i++) {
+                enum PixelFormat p = link->in_formats->formats[i];
+                best= avcodec_find_best_pix_fmt2(best, p, ref->format, has_alpha, NULL);
+            }
+            av_log(link->src,AV_LOG_DEBUG, "picking %s out of %d ref:%s alpha:%d\n",
+                   av_get_pix_fmt_name(best), link->in_formats->format_count,
+                   av_get_pix_fmt_name(ref->format), has_alpha);
+            link->in_formats->formats[0] = best;
+        }
+    }
 
     link->in_formats->format_count = 1;
     link->format = link->in_formats->formats[0];
-    avfilter_formats_unref(&link->in_formats);
-    avfilter_formats_unref(&link->out_formats);
 
     if (link->type == AVMEDIA_TYPE_AUDIO) {
-        link->in_chlayouts->format_count = 1;
-        link->channel_layout = link->in_chlayouts->formats[0];
-        avfilter_formats_unref(&link->in_chlayouts);
-        avfilter_formats_unref(&link->out_chlayouts);
+        if (!link->in_samplerates->format_count) {
+            av_log(link->src, AV_LOG_ERROR, "Cannot select sample rate for"
+                   " the link between filters %s and %s.\n", link->src->name,
+                   link->dst->name);
+            return AVERROR(EINVAL);
+        }
+        link->in_samplerates->format_count = 1;
+        link->sample_rate = link->in_samplerates->formats[0];
 
-        link->in_packing->format_count = 1;
-        link->planar = link->in_packing->formats[0] == AVFILTER_PLANAR;
-        avfilter_formats_unref(&link->in_packing);
-        avfilter_formats_unref(&link->out_packing);
+        if (!link->in_channel_layouts->nb_channel_layouts) {
+            av_log(link->src, AV_LOG_ERROR, "Cannot select channel layout for"
+                   "the link between filters %s and %s.\n", link->src->name,
+                   link->dst->name);
+            return AVERROR(EINVAL);
+        }
+        link->in_channel_layouts->nb_channel_layouts = 1;
+        link->channel_layout = link->in_channel_layouts->channel_layouts[0];
+    }
+
+    ff_formats_unref(&link->in_formats);
+    ff_formats_unref(&link->out_formats);
+    ff_formats_unref(&link->in_samplerates);
+    ff_formats_unref(&link->out_samplerates);
+    ff_channel_layouts_unref(&link->in_channel_layouts);
+    ff_channel_layouts_unref(&link->out_channel_layouts);
+
+    return 0;
+}
+
+#define REDUCE_FORMATS(fmt_type, list_type, list, var, nb, add_format) \
+do {                                                                   \
+    for (i = 0; i < filter->nb_inputs; i++) {                          \
+        AVFilterLink *link = filter->inputs[i];                        \
+        fmt_type fmt;                                                  \
+                                                                       \
+        if (!link->out_ ## list || link->out_ ## list->nb != 1)        \
+            continue;                                                  \
+        fmt = link->out_ ## list->var[0];                              \
+                                                                       \
+        for (j = 0; j < filter->nb_outputs; j++) {                     \
+            AVFilterLink *out_link = filter->outputs[j];               \
+            list_type *fmts;                                           \
+                                                                       \
+            if (link->type != out_link->type ||                        \
+                out_link->in_ ## list->nb == 1)                        \
+                continue;                                              \
+            fmts = out_link->in_ ## list;                              \
+                                                                       \
+            if (!out_link->in_ ## list->nb) {                          \
+                add_format(&out_link->in_ ##list, fmt);                \
+                break;                                                 \
+            }                                                          \
+                                                                       \
+            for (k = 0; k < out_link->in_ ## list->nb; k++)            \
+                if (fmts->var[k] == fmt) {                             \
+                    fmts->var[0]  = fmt;                               \
+                    fmts->nb = 1;                                      \
+                    ret = 1;                                           \
+                    break;                                             \
+                }                                                      \
+        }                                                              \
+    }                                                                  \
+} while (0)
+
+static int reduce_formats_on_filter(AVFilterContext *filter)
+{
+    int i, j, k, ret = 0;
+
+    REDUCE_FORMATS(int,      AVFilterFormats,        formats,         formats,
+                   format_count, ff_add_format);
+    REDUCE_FORMATS(int,      AVFilterFormats,        samplerates,     formats,
+                   format_count, ff_add_format);
+    REDUCE_FORMATS(uint64_t, AVFilterChannelLayouts, channel_layouts,
+                   channel_layouts, nb_channel_layouts, ff_add_channel_layout);
+
+    return ret;
+}
+
+static void reduce_formats(AVFilterGraph *graph)
+{
+    int i, reduced;
+
+    do {
+        reduced = 0;
+
+        for (i = 0; i < graph->filter_count; i++)
+            reduced |= reduce_formats_on_filter(graph->filters[i]);
+    } while (reduced);
+}
+
+static void swap_samplerates_on_filter(AVFilterContext *filter)
+{
+    AVFilterLink *link = NULL;
+    int sample_rate;
+    int i, j;
+
+    for (i = 0; i < filter->nb_inputs; i++) {
+        link = filter->inputs[i];
+
+        if (link->type == AVMEDIA_TYPE_AUDIO &&
+            link->out_samplerates->format_count == 1)
+            break;
+    }
+    if (i == filter->nb_inputs)
+        return;
+
+    sample_rate = link->out_samplerates->formats[0];
+
+    for (i = 0; i < filter->nb_outputs; i++) {
+        AVFilterLink *outlink = filter->outputs[i];
+        int best_idx, best_diff = INT_MAX;
+
+        if (outlink->type != AVMEDIA_TYPE_AUDIO ||
+            outlink->in_samplerates->format_count < 2)
+            continue;
+
+        for (j = 0; j < outlink->in_samplerates->format_count; j++) {
+            int diff = abs(sample_rate - outlink->in_samplerates->formats[j]);
+
+            if (diff < best_diff) {
+                best_diff = diff;
+                best_idx  = j;
+            }
+        }
+        FFSWAP(int, outlink->in_samplerates->formats[0],
+               outlink->in_samplerates->formats[best_idx]);
     }
 }
 
-static void pick_formats(AVFilterGraph *graph)
+static void swap_samplerates(AVFilterGraph *graph)
 {
+    int i;
+
+    for (i = 0; i < graph->filter_count; i++)
+        swap_samplerates_on_filter(graph->filters[i]);
+}
+
+static void swap_channel_layouts_on_filter(AVFilterContext *filter)
+{
+    AVFilterLink *link = NULL;
+    uint64_t chlayout;
     int i, j;
+
+    for (i = 0; i < filter->nb_inputs; i++) {
+        link = filter->inputs[i];
+
+        if (link->type == AVMEDIA_TYPE_AUDIO &&
+            link->out_channel_layouts->nb_channel_layouts == 1)
+            break;
+    }
+    if (i == filter->nb_inputs)
+        return;
+
+    chlayout = link->out_channel_layouts->channel_layouts[0];
+
+    for (i = 0; i < filter->nb_outputs; i++) {
+        AVFilterLink *outlink = filter->outputs[i];
+        int best_idx, best_score = INT_MIN;
+
+        if (outlink->type != AVMEDIA_TYPE_AUDIO ||
+            outlink->in_channel_layouts->nb_channel_layouts < 2)
+            continue;
+
+        for (j = 0; j < outlink->in_channel_layouts->nb_channel_layouts; j++) {
+            uint64_t out_chlayout = outlink->in_channel_layouts->channel_layouts[j];
+            int matched_channels  = av_get_channel_layout_nb_channels(chlayout &
+                                                                      out_chlayout);
+            int extra_channels     = av_get_channel_layout_nb_channels(out_chlayout &
+                                                                       (~chlayout));
+            int score = matched_channels - extra_channels;
+
+            if (score > best_score) {
+                best_score = score;
+                best_idx   = j;
+            }
+        }
+        FFSWAP(uint64_t, outlink->in_channel_layouts->channel_layouts[0],
+               outlink->in_channel_layouts->channel_layouts[best_idx]);
+    }
+
+}
+
+static void swap_channel_layouts(AVFilterGraph *graph)
+{
+    int i;
+
+    for (i = 0; i < graph->filter_count; i++)
+        swap_channel_layouts_on_filter(graph->filters[i]);
+}
+
+static void swap_sample_fmts_on_filter(AVFilterContext *filter)
+{
+    AVFilterLink *link = NULL;
+    int format, bps;
+    int i, j;
+
+    for (i = 0; i < filter->nb_inputs; i++) {
+        link = filter->inputs[i];
+
+        if (link->type == AVMEDIA_TYPE_AUDIO &&
+            link->out_formats->format_count == 1)
+            break;
+    }
+    if (i == filter->nb_inputs)
+        return;
+
+    format = link->out_formats->formats[0];
+    bps    = av_get_bytes_per_sample(format);
+
+    for (i = 0; i < filter->nb_outputs; i++) {
+        AVFilterLink *outlink = filter->outputs[i];
+        int best_idx = -1, best_score = INT_MIN;
+
+        if (outlink->type != AVMEDIA_TYPE_AUDIO ||
+            outlink->in_formats->format_count < 2)
+            continue;
+
+        for (j = 0; j < outlink->in_formats->format_count; j++) {
+            int out_format = outlink->in_formats->formats[j];
+            int out_bps    = av_get_bytes_per_sample(out_format);
+            int score;
+
+            if (av_get_packed_sample_fmt(out_format) == format ||
+                av_get_planar_sample_fmt(out_format) == format) {
+                best_idx   = j;
+                break;
+            }
+
+            /* for s32 and float prefer double to prevent loss of information */
+            if (bps == 4 && out_bps == 8) {
+                best_idx = j;
+                break;
+            }
+
+            /* prefer closest higher or equal bps */
+            score = -abs(out_bps - bps);
+            if (out_bps >= bps)
+                score += INT_MAX/2;
+
+            if (score > best_score) {
+                best_score = score;
+                best_idx   = j;
+            }
+        }
+        av_assert0(best_idx >= 0);
+        FFSWAP(int, outlink->in_formats->formats[0],
+               outlink->in_formats->formats[best_idx]);
+    }
+}
+
+static void swap_sample_fmts(AVFilterGraph *graph)
+{
+    int i;
+
+    for (i = 0; i < graph->filter_count; i++)
+        swap_sample_fmts_on_filter(graph->filters[i]);
+
+}
+
+static int pick_formats(AVFilterGraph *graph)
+{
+    int i, j, ret;
+    int change;
+
+    do{
+        change = 0;
+        for (i = 0; i < graph->filter_count; i++) {
+            AVFilterContext *filter = graph->filters[i];
+            if (filter->nb_inputs){
+                for (j = 0; j < filter->nb_inputs; j++){
+                    if(filter->inputs[j]->in_formats && filter->inputs[j]->in_formats->format_count == 1) {
+                        pick_format(filter->inputs[j], NULL);
+                        change = 1;
+                    }
+                }
+            }
+            if (filter->nb_outputs){
+                for (j = 0; j < filter->nb_outputs; j++){
+                    if(filter->outputs[j]->in_formats && filter->outputs[j]->in_formats->format_count == 1) {
+                        pick_format(filter->outputs[j], NULL);
+                        change = 1;
+                    }
+                }
+            }
+            if (filter->nb_inputs && filter->nb_outputs && filter->inputs[0]->format>=0) {
+                for (j = 0; j < filter->nb_outputs; j++) {
+                    if(filter->outputs[j]->format<0) {
+                        pick_format(filter->outputs[j], filter->inputs[0]);
+                        change = 1;
+                    }
+                }
+            }
+        }
+    }while(change);
 
     for (i = 0; i < graph->filter_count; i++) {
         AVFilterContext *filter = graph->filters[i];
 
-        for (j = 0; j < filter->input_count; j++)
-            pick_format(filter->inputs[j]);
-        for (j = 0; j < filter->output_count; j++)
-            pick_format(filter->outputs[j]);
+        for (j = 0; j < filter->nb_inputs; j++)
+            if ((ret = pick_format(filter->inputs[j], NULL)) < 0)
+                return ret;
+        for (j = 0; j < filter->nb_outputs; j++)
+            if ((ret = pick_format(filter->outputs[j], NULL)) < 0)
+                return ret;
     }
+    return 0;
 }
 
-int ff_avfilter_graph_config_formats(AVFilterGraph *graph, AVClass *log_ctx)
+/**
+ * Configure the formats of all the links in the graph.
+ */
+static int graph_config_formats(AVFilterGraph *graph, AVClass *log_ctx)
 {
     int ret;
 
@@ -279,8 +761,98 @@ int ff_avfilter_graph_config_formats(AVFilterGraph *graph, AVClass *log_ctx)
         return ret;
 
     /* Once everything is merged, it's possible that we'll still have
-     * multiple valid media format choices. We pick the first one. */
-    pick_formats(graph);
+     * multiple valid media format choices. We try to minimize the amount
+     * of format conversion inside filters */
+    reduce_formats(graph);
+
+    /* for audio filters, ensure the best format, sample rate and channel layout
+     * is selected */
+    swap_sample_fmts(graph);
+    swap_samplerates(graph);
+    swap_channel_layouts(graph);
+
+    if ((ret = pick_formats(graph)) < 0)
+        return ret;
+
+    return 0;
+}
+
+static int ff_avfilter_graph_config_pointers(AVFilterGraph *graph,
+                                             AVClass *log_ctx)
+{
+    unsigned i, j;
+    int sink_links_count = 0, n = 0;
+    AVFilterContext *f;
+    AVFilterLink **sinks;
+
+    for (i = 0; i < graph->filter_count; i++) {
+        f = graph->filters[i];
+        for (j = 0; j < f->nb_inputs; j++) {
+            f->inputs[j]->graph     = graph;
+            f->inputs[j]->age_index = -1;
+        }
+        for (j = 0; j < f->nb_outputs; j++) {
+            f->outputs[j]->graph    = graph;
+            f->outputs[j]->age_index= -1;
+        }
+        if (!f->nb_outputs) {
+            if (f->nb_inputs > INT_MAX - sink_links_count)
+                return AVERROR(EINVAL);
+            sink_links_count += f->nb_inputs;
+        }
+    }
+    sinks = av_calloc(sink_links_count, sizeof(*sinks));
+    if (!sinks)
+        return AVERROR(ENOMEM);
+    for (i = 0; i < graph->filter_count; i++) {
+        f = graph->filters[i];
+        if (!f->nb_outputs) {
+            for (j = 0; j < f->nb_inputs; j++) {
+                sinks[n] = f->inputs[j];
+                f->inputs[j]->age_index = n++;
+            }
+        }
+    }
+    av_assert0(n == sink_links_count);
+    graph->sink_links       = sinks;
+    graph->sink_links_count = sink_links_count;
+    return 0;
+}
+
+static int graph_insert_fifos(AVFilterGraph *graph, AVClass *log_ctx)
+{
+    AVFilterContext *f;
+    int i, j, ret;
+    int fifo_count = 0;
+
+    for (i = 0; i < graph->filter_count; i++) {
+        f = graph->filters[i];
+
+        for (j = 0; j < f->nb_inputs; j++) {
+            AVFilterLink *link = f->inputs[j];
+            AVFilterContext *fifo_ctx;
+            AVFilter *fifo;
+            char name[32];
+
+            if (!link->dstpad->needs_fifo)
+                continue;
+
+            fifo = f->inputs[j]->type == AVMEDIA_TYPE_VIDEO ?
+                   avfilter_get_by_name("fifo") :
+                   avfilter_get_by_name("afifo");
+
+            snprintf(name, sizeof(name), "auto-inserted fifo %d", fifo_count++);
+
+            ret = avfilter_graph_create_filter(&fifo_ctx, fifo, name, NULL,
+                                               NULL, graph);
+            if (ret < 0)
+                return ret;
+
+            ret = avfilter_insert_filter(link, fifo_ctx, 0, 0);
+            if (ret < 0)
+                return ret;
+        }
+    }
 
     return 0;
 }
@@ -289,11 +861,15 @@ int avfilter_graph_config(AVFilterGraph *graphctx, void *log_ctx)
 {
     int ret;
 
-    if ((ret = ff_avfilter_graph_check_validity(graphctx, log_ctx)))
+    if ((ret = graph_check_validity(graphctx, log_ctx)))
         return ret;
-    if ((ret = ff_avfilter_graph_config_formats(graphctx, log_ctx)))
+    if ((ret = graph_insert_fifos(graphctx, log_ctx)) < 0)
         return ret;
-    if ((ret = ff_avfilter_graph_config_links(graphctx, log_ctx)))
+    if ((ret = graph_config_formats(graphctx, log_ctx)))
+        return ret;
+    if ((ret = graph_config_links(graphctx, log_ctx)))
+        return ret;
+    if ((ret = ff_avfilter_graph_config_pointers(graphctx, log_ctx)))
         return ret;
 
     return 0;
@@ -355,4 +931,69 @@ int avfilter_graph_queue_command(AVFilterGraph *graph, const char *target, const
     }
 
     return 0;
+}
+
+static void heap_bubble_up(AVFilterGraph *graph,
+                           AVFilterLink *link, int index)
+{
+    AVFilterLink **links = graph->sink_links;
+
+    while (index) {
+        int parent = (index - 1) >> 1;
+        if (links[parent]->current_pts >= link->current_pts)
+            break;
+        links[index] = links[parent];
+        links[index]->age_index = index;
+        index = parent;
+    }
+    links[index] = link;
+    link->age_index = index;
+}
+
+static void heap_bubble_down(AVFilterGraph *graph,
+                             AVFilterLink *link, int index)
+{
+    AVFilterLink **links = graph->sink_links;
+
+    while (1) {
+        int child = 2 * index + 1;
+        if (child >= graph->sink_links_count)
+            break;
+        if (child + 1 < graph->sink_links_count &&
+            links[child + 1]->current_pts < links[child]->current_pts)
+            child++;
+        if (link->current_pts < links[child]->current_pts)
+            break;
+        links[index] = links[child];
+        links[index]->age_index = index;
+        index = child;
+    }
+    links[index] = link;
+    link->age_index = index;
+}
+
+void ff_avfilter_graph_update_heap(AVFilterGraph *graph, AVFilterLink *link)
+{
+    heap_bubble_up  (graph, link, link->age_index);
+    heap_bubble_down(graph, link, link->age_index);
+}
+
+
+int avfilter_graph_request_oldest(AVFilterGraph *graph)
+{
+    while (graph->sink_links_count) {
+        AVFilterLink *oldest = graph->sink_links[0];
+        int r = ff_request_frame(oldest);
+        if (r != AVERROR_EOF)
+            return r;
+        av_log(oldest->dst, AV_LOG_DEBUG, "EOF on sink link %s:%s.\n",
+               oldest->dst ? oldest->dst->name : "unknown",
+               oldest->dstpad ? oldest->dstpad->name : "unknown");
+        /* EOF: remove the link from the heap */
+        if (oldest->age_index < --graph->sink_links_count)
+            heap_bubble_down(graph, graph->sink_links[graph->sink_links_count],
+                             oldest->age_index);
+        oldest->age_index = -1;
+    }
+    return AVERROR_EOF;
 }

@@ -389,9 +389,8 @@ static av_unused FFPsyWindowInfo psy_3gpp_window(FFPsyContext *ctx,
     AacPsyChannel *pch  = &pctx->ch[channel];
     uint8_t grouping     = 0;
     int next_type        = pch->next_window_seq;
-    FFPsyWindowInfo wi;
+    FFPsyWindowInfo wi  = { { 0 } };
 
-    memset(&wi, 0, sizeof(wi));
     if (la) {
         float s[8], v;
         int switch_to_eight = 0;
@@ -564,7 +563,7 @@ static void psy_3gpp_analyze_channel(FFPsyContext *ctx, int channel,
     AacPsyChannel *pch  = &pctx->ch[channel];
     int start = 0;
     int i, w, g;
-    float desired_bits, desired_pe, delta_pe, reduction, spread_en[128] = {0};
+    float desired_bits, desired_pe, delta_pe, reduction= NAN, spread_en[128] = {0};
     float a = 0.0f, active_lines = 0.0f, norm_fac = 0.0f;
     float pe = pctx->chan_bitrate > 32000 ? 0.0f : FFMAX(50.0f, 100.0f - pctx->chan_bitrate * 100.0f / 32000.0f);
     const int      num_bands   = ctx->num_bands[wi->num_windows == 8];
@@ -785,9 +784,8 @@ static FFPsyWindowInfo psy_lame_window(FFPsyContext *ctx, const float *audio,
     int uselongblock = 1;
     int attacks[AAC_NUM_BLOCKS_SHORT + 1] = { 0 };
     int i;
-    FFPsyWindowInfo wi;
+    FFPsyWindowInfo wi = { { 0 } };
 
-    memset(&wi, 0, sizeof(wi));
     if (la) {
         float hpfsmpl[AAC_BLOCK_SIZE_LONG];
         float const *pf = hpfsmpl;

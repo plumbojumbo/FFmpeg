@@ -21,6 +21,7 @@
 
 #include "libavutil/intreadwrite.h"
 #include "libavutil/intfloat.h"
+#include "libavutil/avassert.h"
 #include "avformat.h"
 #include "internal.h"
 #include "ffm.h"
@@ -144,8 +145,6 @@ static int ffm_write_header(AVFormatContext *s)
             avio_wb32(pb, codec->dct_algo);
             avio_wb32(pb, codec->strict_std_compliance);
             avio_wb32(pb, codec->max_b_frames);
-            avio_wb32(pb, codec->luma_elim_threshold);
-            avio_wb32(pb, codec->chroma_elim_threshold);
             avio_wb32(pb, codec->mpeg_quant);
             avio_wb32(pb, codec->intra_dc_precision);
             avio_wb32(pb, codec->me_method);
@@ -191,7 +190,7 @@ static int ffm_write_header(AVFormatContext *s)
     /* init packet mux */
     ffm->packet_ptr = ffm->packet;
     ffm->packet_end = ffm->packet + ffm->packet_size - FFM_HEADER_SIZE;
-    assert(ffm->packet_end >= ffm->packet);
+    av_assert0(ffm->packet_end >= ffm->packet);
     ffm->frame_offset = 0;
     ffm->dts = 0;
     ffm->first_packet = 1;

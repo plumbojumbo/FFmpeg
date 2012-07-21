@@ -278,6 +278,9 @@ static int ape_read_header(AVFormatContext * s)
             return AVERROR(ENOMEM);
         for (i = 0; i < ape->seektablelength / sizeof(uint32_t); i++)
             ape->seektable[i] = avio_rl32(pb);
+    }else{
+        av_log(s, AV_LOG_ERROR, "Missing seektable\n");
+        return -1;
     }
 
     ape->frames[0].pos     = ape->firstframe;
@@ -312,12 +315,6 @@ static int ape_read_header(AVFormatContext * s)
 
     ape_dumpinfo(s, ape);
 
-    /* try to read APE tags */
-    if (pb->seekable) {
-        ff_ape_parse_tag(s);
-        avio_seek(pb, 0, SEEK_SET);
-    }
-
     av_log(s, AV_LOG_DEBUG, "Decoding file - v%d.%02d, compression level %"PRIu16"\n",
            ape->fileversion / 1000, (ape->fileversion % 1000) / 10,
            ape->compressiontype);
@@ -335,7 +332,6 @@ static int ape_read_header(AVFormatContext * s)
     st->codec->channels        = ape->channels;
     st->codec->sample_rate     = ape->samplerate;
     st->codec->bits_per_coded_sample = ape->bps;
-    st->codec->frame_size      = MAC_SUBFRAME_SIZE;
 
     st->nb_frames = ape->totalframes;
     st->start_time = 0;
@@ -353,6 +349,12 @@ static int ape_read_header(AVFormatContext * s)
         ape->frames[i].pts = pts;
         av_add_index_entry(st, ape->frames[i].pos, ape->frames[i].pts, 0, 0, AVINDEX_KEYFRAME);
         pts += ape->blocksperframe / MAC_SUBFRAME_SIZE;
+    }
+
+    /* try to read APE tags */
+    if (pb->seekable) {
+        ff_ape_parse_tag(s);
+        avio_seek(pb, 0, SEEK_SET);
     }
 
     return 0;
@@ -439,5 +441,5 @@ AVInputFormat ff_ape_demuxer = {
     .read_packet    = ape_read_packet,
     .read_close     = ape_read_close,
     .read_seek      = ape_read_seek,
-    .extensions = "ape,apl,mac"
+    .extensions     = "ape,apl,mac",
 };

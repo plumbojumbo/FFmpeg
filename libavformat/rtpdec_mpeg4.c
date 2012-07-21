@@ -138,7 +138,7 @@ static int rtp_parse_mp4_au(PayloadContext *data, const uint8_t *buf)
 
     init_get_bits(&getbitcontext, buf, data->au_headers_length_bytes * 8);
 
-    /* XXX: Wrong if optionnal additional sections are present (cts, dts etc...) */
+    /* XXX: Wrong if optional additional sections are present (cts, dts etc...) */
     au_header_size = data->sizelength + data->indexlength;
     if (au_header_size <= 0 || (au_headers_length % au_header_size != 0))
         return -1;
@@ -222,6 +222,9 @@ static int parse_sdp_line(AVFormatContext *s, int st_index,
                           PayloadContext *data, const char *line)
 {
     const char *p;
+
+    if (st_index < 0)
+        return 0;
 
     if (av_strstart(line, "fmtp:", &p))
         return ff_parse_fmtp(s->streams[st_index], data, p, parse_fmtp);

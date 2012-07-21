@@ -28,6 +28,10 @@
  */
 
 #include "avfilter.h"
+#include "internal.h"
+#include "formats.h"
+#include "internal.h"
+#include "video.h"
 
 typedef struct {
     unsigned int bamount; ///< black amount
@@ -45,11 +49,11 @@ static int query_formats(AVFilterContext *ctx)
         PIX_FMT_NONE
     };
 
-    avfilter_set_common_pixel_formats(ctx, avfilter_make_format_list(pix_fmts));
+    ff_set_common_formats(ctx, ff_make_format_list(pix_fmts));
     return 0;
 }
 
-static av_cold int init(AVFilterContext *ctx, const char *args, void *opaque)
+static av_cold int init(AVFilterContext *ctx, const char *args)
 {
     BlackFrameContext *blackframe = ctx->priv;
 
@@ -62,7 +66,7 @@ static av_cold int init(AVFilterContext *ctx, const char *args, void *opaque)
     if (args)
         sscanf(args, "%u:%u", &blackframe->bamount, &blackframe->bthresh);
 
-    av_log(ctx, AV_LOG_INFO, "bamount:%u bthresh:%u\n",
+    av_log(ctx, AV_LOG_VERBOSE, "bamount:%u bthresh:%u\n",
            blackframe->bamount, blackframe->bthresh);
 
     if (blackframe->bamount > 100 || blackframe->bthresh > 255) {
@@ -87,7 +91,7 @@ static void draw_slice(AVFilterLink *inlink, int y, int h, int slice_dir)
         p += picref->linesize[0];
     }
 
-    avfilter_draw_slice(ctx->outputs[0], y, h, slice_dir);
+    ff_draw_slice(ctx->outputs[0], y, h, slice_dir);
 }
 
 static void end_frame(AVFilterLink *inlink)
@@ -110,7 +114,8 @@ static void end_frame(AVFilterLink *inlink)
 
     blackframe->frame++;
     blackframe->nblack = 0;
-    avfilter_end_frame(inlink->dst->outputs[0]);
+    avfilter_unref_buffer(picref);
+    ff_end_frame(inlink->dst->outputs[0]);
 }
 
 AVFilter avfilter_vf_blackframe = {
@@ -125,8 +130,8 @@ AVFilter avfilter_vf_blackframe = {
     .inputs    = (const AVFilterPad[]) {{ .name       = "default",
                                     .type             = AVMEDIA_TYPE_VIDEO,
                                     .draw_slice       = draw_slice,
-                                    .get_video_buffer = avfilter_null_get_video_buffer,
-                                    .start_frame      = avfilter_null_start_frame,
+                                    .get_video_buffer = ff_null_get_video_buffer,
+                                    .start_frame      = ff_null_start_frame_keep_ref,
                                     .end_frame        = end_frame, },
                                   { .name = NULL}},
 

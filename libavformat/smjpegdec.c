@@ -2,20 +2,20 @@
  * SMJPEG demuxer
  * Copyright (c) 2011 Paul B Mahol
  *
- * This file is part of Libav.
+ * This file is part of FFmpeg.
  *
- * Libav is free software; you can redistribute it and/or
+ * FFmpeg is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
  * version 2.1 of the License, or (at your option) any later version.
  *
- * Libav is distributed in the hope that it will be useful,
+ * FFmpeg is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public
- * License along with Libav; if not, write to the Free Software
+ * License along with FFmpeg; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
@@ -136,9 +136,11 @@ static int smjpeg_read_packet(AVFormatContext *s, AVPacket *pkt)
 {
     SMJPEGContext *sc = s->priv_data;
     uint32_t dtype, ret, size, timestamp;
+    int64_t pos;
 
     if (s->pb->eof_reached)
         return AVERROR_EOF;
+    pos   = avio_tell(s->pb);
     dtype = avio_rl32(s->pb);
     switch (dtype) {
     case SMJPEG_SNDD:
@@ -147,6 +149,7 @@ static int smjpeg_read_packet(AVFormatContext *s, AVPacket *pkt)
         ret = av_get_packet(s->pb, pkt, size);
         pkt->stream_index = sc->audio_stream_index;
         pkt->pts = timestamp;
+        pkt->pos = pos;
         break;
     case SMJPEG_VIDD:
         timestamp = avio_rb32(s->pb);
@@ -154,6 +157,7 @@ static int smjpeg_read_packet(AVFormatContext *s, AVPacket *pkt)
         ret = av_get_packet(s->pb, pkt, size);
         pkt->stream_index = sc->video_stream_index;
         pkt->pts = timestamp;
+        pkt->pos = pos;
         break;
     case SMJPEG_DONE:
         ret = AVERROR_EOF;
@@ -174,4 +178,5 @@ AVInputFormat ff_smjpeg_demuxer = {
     .read_header    = smjpeg_read_header,
     .read_packet    = smjpeg_read_packet,
     .extensions     = "mjpg",
+    .flags          = AVFMT_GENERIC_INDEX,
 };

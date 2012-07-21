@@ -27,6 +27,7 @@
 #include "libavutil/opt.h"
 #include "libavutil/parseutils.h"
 #include "libavutil/pixdesc.h"
+#include "libavutil/avassert.h"
 
 /* raw input */
 int ff_raw_read_header(AVFormatContext *s)
@@ -67,7 +68,7 @@ int ff_raw_read_header(AVFormatContext *s)
                 st->codec->channels    = s1->channels;
 
             st->codec->bits_per_coded_sample = av_get_bits_per_sample(st->codec->codec_id);
-            assert(st->codec->bits_per_coded_sample > 0);
+            av_assert0(st->codec->bits_per_coded_sample > 0);
             st->codec->block_align = st->codec->bits_per_coded_sample*st->codec->channels/8;
             avpriv_set_pts_info(st, 64, 1, st->codec->sample_rate);
             break;
@@ -157,7 +158,7 @@ int ff_raw_video_read_header(AVFormatContext *s)
 
     st->codec->codec_type = AVMEDIA_TYPE_VIDEO;
     st->codec->codec_id = s->iformat->raw_codec_id;
-    st->need_parsing = AVSTREAM_PARSE_FULL;
+    st->need_parsing = AVSTREAM_PARSE_FULL_RAW;
 
     if ((ret = av_parse_video_rate(&framerate, s1->framerate)) < 0) {
         av_log(s, AV_LOG_ERROR, "Could not parse framerate: %s.\n", s1->framerate);
@@ -186,8 +187,8 @@ AVInputFormat ff_g722_demuxer = {
     .long_name      = NULL_IF_CONFIG_SMALL("raw G.722"),
     .read_header    = ff_raw_read_header,
     .read_packet    = ff_raw_read_partial_packet,
-    .flags= AVFMT_GENERIC_INDEX,
-    .extensions = "g722,722",
+    .flags          = AVFMT_GENERIC_INDEX,
+    .extensions     = "g722,722",
     .raw_codec_id   = CODEC_ID_ADPCM_G722,
 };
 #endif
@@ -198,8 +199,8 @@ AVInputFormat ff_latm_demuxer = {
     .long_name      = NULL_IF_CONFIG_SMALL("raw LOAS/LATM"),
     .read_header    = ff_raw_audio_read_header,
     .read_packet    = ff_raw_read_partial_packet,
-    .flags= AVFMT_GENERIC_INDEX,
-    .extensions = "latm",
+    .flags          = AVFMT_GENERIC_INDEX,
+    .extensions     = "latm",
     .raw_codec_id   = CODEC_ID_AAC_LATM,
 };
 #endif
@@ -214,8 +215,8 @@ AVInputFormat ff_mlp_demuxer = {
     .long_name      = NULL_IF_CONFIG_SMALL("raw MLP"),
     .read_header    = ff_raw_audio_read_header,
     .read_packet    = ff_raw_read_partial_packet,
-    .flags= AVFMT_GENERIC_INDEX,
-    .extensions = "mlp",
+    .flags          = AVFMT_GENERIC_INDEX,
+    .extensions     = "mlp",
     .raw_codec_id   = CODEC_ID_MLP,
 };
 #endif
@@ -226,8 +227,8 @@ AVInputFormat ff_truehd_demuxer = {
     .long_name      = NULL_IF_CONFIG_SMALL("raw TrueHD"),
     .read_header    = ff_raw_audio_read_header,
     .read_packet    = ff_raw_read_partial_packet,
-    .flags= AVFMT_GENERIC_INDEX,
-    .extensions = "thd",
+    .flags          = AVFMT_GENERIC_INDEX,
+    .extensions     = "thd",
     .raw_codec_id   = CODEC_ID_TRUEHD,
 };
 #endif
@@ -239,7 +240,7 @@ AVInputFormat ff_shorten_demuxer = {
     .read_header    = ff_raw_audio_read_header,
     .read_packet    = ff_raw_read_partial_packet,
     .flags          = AVFMT_NOBINSEARCH | AVFMT_NOGENSEARCH | AVFMT_NO_BYTE_SEEK,
-    .extensions = "shn",
+    .extensions     = "shn",
     .raw_codec_id   = CODEC_ID_SHORTEN,
 };
 #endif

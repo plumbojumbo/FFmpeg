@@ -104,8 +104,7 @@ static int sap_write_header(AVFormatContext *s)
     }
 
     if (!announce_addr[0]) {
-        struct addrinfo hints, *ai = NULL;
-        memset(&hints, 0, sizeof(hints));
+        struct addrinfo hints = { 0 }, *ai = NULL;
         hints.ai_family = AF_UNSPEC;
         if (getaddrinfo(host, NULL, &hints, &ai)) {
             av_log(s, AV_LOG_ERROR, "Unable to resolve %s\n", host);
@@ -151,8 +150,10 @@ static int sap_write_header(AVFormatContext *s)
             ret = AVERROR(EIO);
             goto fail;
         }
-        s->streams[i]->priv_data = contexts[i] =
-            ff_rtp_chain_mux_open(s, s->streams[i], fd, 0);
+        ret = ff_rtp_chain_mux_open(&contexts[i], s, s->streams[i], fd, 0);
+        if (ret < 0)
+            goto fail;
+        s->streams[i]->priv_data = contexts[i];
         av_strlcpy(contexts[i]->filename, url, sizeof(contexts[i]->filename));
     }
 
@@ -210,7 +211,7 @@ static int sap_write_header(AVFormatContext *s)
     pos += strlen(&sap->ann[pos]) + 1;
 
     if (av_sdp_create(contexts, s->nb_streams, &sap->ann[pos],
-                       sap->ann_size - pos)) {
+                      sap->ann_size - pos)) {
         ret = AVERROR_INVALIDDATA;
         goto fail;
     }
@@ -259,5 +260,5 @@ AVOutputFormat ff_sap_muxer = {
     .write_header      = sap_write_header,
     .write_packet      = sap_write_packet,
     .write_trailer     = sap_write_close,
-    .flags = AVFMT_NOFILE | AVFMT_GLOBALHEADER,
+    .flags             = AVFMT_NOFILE | AVFMT_GLOBALHEADER,
 };

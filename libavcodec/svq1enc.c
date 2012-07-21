@@ -32,12 +32,11 @@
 #include "mpegvideo.h"
 #include "h263.h"
 #include "internal.h"
+#include "libavutil/avassert.h"
 
 #include "svq1.h"
 #include "svq1enc_cb.h"
 
-#undef NDEBUG
-#include <assert.h>
 
 
 typedef struct SVQ1Context {
@@ -95,7 +94,7 @@ static void svq1_write_header(SVQ1Context *s, int frame_type)
         /* output 5 unknown bits (2 + 2 + 1) */
         put_bits(&s->pb, 5, 2); /* 2 needed by quicktime decoder */
 
-        i= ff_match_2uint16(ff_svq1_frame_size_table, FF_ARRAY_ELEMS(ff_svq1_frame_size_table), s->frame_width, s->frame_height);
+        i= ff_match_2uint16((void*)ff_svq1_frame_size_table, FF_ARRAY_ELEMS(ff_svq1_frame_size_table), s->frame_width, s->frame_height);
         put_bits(&s->pb, 3, i);
 
         if (i == 7)
@@ -176,7 +175,7 @@ static int encode_block(SVQ1Context *s, uint8_t *src, uint8_t *ref, uint8_t *dec
                 score= sqr - ((diff*(int64_t)diff)>>(level+3)); //FIXME 64bit slooow
                 if(score < best_vector_score){
                     int mean= (diff + (size>>1)) >> (level+3);
-                    assert(mean >-300 && mean<300);
+                    av_assert2(mean >-300 && mean<300);
                     mean= av_clip(mean, intra?0:-256, 255);
                     best_vector_score= score;
                     best_vector[stage]= i;
@@ -184,7 +183,7 @@ static int encode_block(SVQ1Context *s, uint8_t *src, uint8_t *ref, uint8_t *dec
                     best_vector_mean= mean;
                 }
             }
-            assert(best_vector_mean != -999);
+            av_assert0(best_vector_mean != -999);
             vector= codebook + stage*size*16 + best_vector[stage]*size;
             for(j=0; j<size; j++){
                 block[stage+1][j] = block[stage][j] - vector[j];
@@ -229,10 +228,10 @@ static int encode_block(SVQ1Context *s, uint8_t *src, uint8_t *ref, uint8_t *dec
         put_bits(&s->reorder_pb[level], 1, split);
 
     if(!split){
-        assert((best_mean >= 0 && best_mean<256) || !intra);
-        assert(best_mean >= -256 && best_mean<256);
-        assert(best_count >=0 && best_count<7);
-        assert(level<4 || best_count==0);
+        av_assert1((best_mean >= 0 && best_mean<256) || !intra);
+        av_assert1(best_mean >= -256 && best_mean<256);
+        av_assert1(best_count >=0 && best_count<7);
+        av_assert1(level<4 || best_count==0);
 
         /* output the encoding */
         put_bits(&s->reorder_pb[level],
@@ -242,7 +241,7 @@ static int encode_block(SVQ1Context *s, uint8_t *src, uint8_t *ref, uint8_t *dec
             mean_vlc[best_mean][0]);
 
         for (i = 0; i < best_count; i++){
-            assert(best_vector[i]>=0 && best_vector[i]<16);
+            av_assert2(best_vector[i]>=0 && best_vector[i]<16);
             put_bits(&s->reorder_pb[level], 4, best_vector[i]);
         }
 
@@ -402,7 +401,7 @@ static int svq1_encode_plane(SVQ1Context *s, int plane, unsigned char *src_plane
                 int mx, my, pred_x, pred_y, dxy;
                 int16_t *motion_ptr;
 
-                motion_ptr= h263_pred_motion(&s->m, 0, 0, &pred_x, &pred_y);
+                motion_ptr= ff_h263_pred_motion(&s->m, 0, 0, &pred_x, &pred_y);
                 if(s->m.mb_type[x + y*s->m.mb_stride]&CANDIDATE_MB_TYPE_INTER){
                     for(i=0; i<6; i++)
                         init_put_bits(&s->reorder_pb[i], reorder_buffer[1][i], 7*32);
@@ -412,10 +411,10 @@ static int svq1_encode_plane(SVQ1Context *s, int plane, unsigned char *src_plane
                     s->m.pb= s->reorder_pb[5];
                     mx= motion_ptr[0];
                     my= motion_ptr[1];
-                    assert(mx>=-32 && mx<=31);
-                    assert(my>=-32 && my<=31);
-                    assert(pred_x>=-32 && pred_x<=31);
-                    assert(pred_y>=-32 && pred_y<=31);
+                    av_assert1(mx>=-32 && mx<=31);
+                    av_assert1(my>=-32 && my<=31);
+                    av_assert1(pred_x>=-32 && pred_x<=31);
+                    av_assert1(pred_y>=-32 && pred_y<=31);
                     ff_h263_encode_motion(&s->m, mx - pred_x, 1);
                     ff_h263_encode_motion(&s->m, my - pred_y, 1);
                     s->reorder_pb[5]= s->m.pb;
@@ -472,8 +471,8 @@ static av_cold int svq1_encode_init(AVCodecContext *avctx)
 {
     SVQ1Context * const s = avctx->priv_data;
 
-    dsputil_init(&s->dsp, avctx);
-    avctx->coded_frame= (AVFrame*)&s->picture;
+    ff_dsputil_init(&s->dsp, avctx);
+    avctx->coded_frame = &s->picture;
 
     s->frame_width = avctx->width;
     s->frame_height = avctx->height;
@@ -492,19 +491,21 @@ static av_cold int svq1_encode_init(AVCodecContext *avctx)
     s->m.me.score_map = av_mallocz(ME_MAP_SIZE*sizeof(uint32_t));
     s->mb_type        = av_mallocz((s->y_block_width+1)*s->y_block_height*sizeof(int16_t));
     s->dummy          = av_mallocz((s->y_block_width+1)*s->y_block_height*sizeof(int32_t));
-    h263_encode_init(&s->m); //mv_penalty
+    ff_h263_encode_init(&s->m); //mv_penalty
 
     return 0;
 }
 
-static int svq1_encode_frame(AVCodecContext *avctx, unsigned char *buf,
-    int buf_size, void *data)
+static int svq1_encode_frame(AVCodecContext *avctx, AVPacket *pkt,
+                             const AVFrame *pict, int *got_packet)
 {
     SVQ1Context * const s = avctx->priv_data;
-    AVFrame *pict = data;
-    AVFrame * const p= (AVFrame*)&s->picture;
+    AVFrame * const p = &s->picture;
     AVFrame temp;
-    int i;
+    int i, ret;
+
+    if ((ret = ff_alloc_packet2(avctx, pkt, s->y_block_width*s->y_block_height*MAX_MB_BYTES*3 + FF_MIN_BUFFER_SIZE) < 0))
+        return ret;
 
     if(avctx->pix_fmt != PIX_FMT_YUV410P){
         av_log(avctx, AV_LOG_ERROR, "unsupported pixel format\n");
@@ -521,7 +522,7 @@ static int svq1_encode_frame(AVCodecContext *avctx, unsigned char *buf,
     s->current_picture= s->last_picture;
     s->last_picture= temp;
 
-    init_put_bits(&s->pb, buf, buf_size);
+    init_put_bits(&s->pb, pkt->data, pkt->size);
 
     *p = *pict;
     p->pict_type = avctx->gop_size && avctx->frame_number % avctx->gop_size ? AV_PICTURE_TYPE_P : AV_PICTURE_TYPE_I;
@@ -542,7 +543,12 @@ static int svq1_encode_frame(AVCodecContext *avctx, unsigned char *buf,
 
     flush_put_bits(&s->pb);
 
-    return put_bits_count(&s->pb) / 8;
+    pkt->size = put_bits_count(&s->pb) / 8;
+    if (p->pict_type == AV_PICTURE_TYPE_I)
+        pkt->flags |= AV_PKT_FLAG_KEY;
+    *got_packet = 1;
+
+    return 0;
 }
 
 static av_cold int svq1_encode_end(AVCodecContext *avctx)
@@ -578,8 +584,8 @@ AVCodec ff_svq1_encoder = {
     .id             = CODEC_ID_SVQ1,
     .priv_data_size = sizeof(SVQ1Context),
     .init           = svq1_encode_init,
-    .encode         = svq1_encode_frame,
+    .encode2        = svq1_encode_frame,
     .close          = svq1_encode_end,
-    .pix_fmts= (const enum PixelFormat[]){PIX_FMT_YUV410P, PIX_FMT_NONE},
-    .long_name= NULL_IF_CONFIG_SMALL("Sorenson Vector Quantizer 1 / Sorenson Video 1 / SVQ1"),
+    .pix_fmts       = (const enum PixelFormat[]){ PIX_FMT_YUV410P, PIX_FMT_NONE },
+    .long_name      = NULL_IF_CONFIG_SMALL("Sorenson Vector Quantizer 1 / Sorenson Video 1 / SVQ1"),
 };

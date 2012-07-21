@@ -88,7 +88,7 @@ static void sdp_write_header(char *buff, int size, struct sdp_session_level *s)
 static int resolve_destination(char *dest_addr, int size, char *type,
                                int type_size)
 {
-    struct addrinfo hints, *ai;
+    struct addrinfo hints = { 0 }, *ai;
     int is_multicast;
 
     av_strlcpy(type, "IP4", type_size);
@@ -98,7 +98,6 @@ static int resolve_destination(char *dest_addr, int size, char *type,
     /* Resolve the destination, since it must be written
      * as a numeric IP address in the SDP. */
 
-    memset(&hints, 0, sizeof(hints));
     if (getaddrinfo(dest_addr, NULL, &hints, &ai))
         return 0;
     getnameinfo(ai->ai_addr, ai->ai_addrlen, dest_addr, size,
@@ -389,21 +388,29 @@ static char *sdp_write_media_attributes(char *buff, int size, AVCodecContext *c,
     char *config = NULL;
 
     switch (c->codec_id) {
-        case CODEC_ID_H264:
+        case CODEC_ID_H264: {
+            int mode = 1;
+            if (fmt && fmt->oformat->priv_class &&
+                av_opt_flag_is_set(fmt->priv_data, "rtpflags", "h264_mode0"))
+                mode = 0;
             if (c->extradata_size) {
                 config = extradata2psets(c);
             }
             av_strlcatf(buff, size, "a=rtpmap:%d H264/90000\r\n"
-                                    "a=fmtp:%d packetization-mode=1%s\r\n",
+                                    "a=fmtp:%d packetization-mode=%d%s\r\n",
                                      payload_type,
-                                     payload_type, config ? config : "");
+                                     payload_type, mode, config ? config : "");
             break;
+        }
         case CODEC_ID_H263:
         case CODEC_ID_H263P:
             /* a=framesize is required by 3GPP TS 26.234 (PSS). It
              * actually specifies the maximum video size, but we only know
              * the current size. This is required for playback on Android
              * stagefright and on Samsung bada. */
+            if (!fmt || !fmt->oformat->priv_class ||
+                !av_opt_flag_is_set(fmt->priv_data, "rtpflags", "rfc2190") ||
+                c->codec_id == CODEC_ID_H263P)
             av_strlcatf(buff, size, "a=rtpmap:%d H263-2000/90000\r\n"
                                     "a=framesize:%d %d-%d\r\n",
                                     payload_type,
@@ -542,6 +549,12 @@ static char *sdp_write_media_attributes(char *buff, int size, AVCodecContext *c,
                                          c->sample_rate);
             break;
         }
+        case CODEC_ID_ILBC:
+            av_strlcatf(buff, size, "a=rtpmap:%d iLBC/%d\r\n"
+                                    "a=fmtp:%d mode=%d\r\n",
+                                     payload_type, c->sample_rate,
+                                     payload_type, c->block_align == 38 ? 20 : 30);
+            break;
         default:
             /* Nothing special to do here... */
             break;
@@ -578,12 +591,11 @@ void ff_sdp_write_media(char *buff, int size, AVCodecContext *c, const char *des
 int av_sdp_create(AVFormatContext *ac[], int n_files, char *buf, int size)
 {
     AVDictionaryEntry *title = av_dict_get(ac[0]->metadata, "title", NULL, 0);
-    struct sdp_session_level s;
+    struct sdp_session_level s = { 0 };
     int i, j, port, ttl, is_multicast;
     char dst[32], dst_type[5];
 
     memset(buf, 0, size);
-    memset(&s, 0, sizeof(struct sdp_session_level));
     s.user = "-";
     s.src_addr = "127.0.0.1";    /* FIXME: Properly set this */
     s.src_type = "IP4";

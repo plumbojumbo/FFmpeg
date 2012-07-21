@@ -208,7 +208,7 @@ static AVIOContext * wtvfile_open_sector(int first_sector, uint64_t length, int 
     }
     wf->length = length;
 
-    /* seek to intial sector */
+    /* seek to initial sector */
     wf->position = 0;
     if (avio_seek(s->pb, (int64_t)wf->sectors[0] << WTV_SECTOR_BITS, SEEK_SET) < 0) {
         av_free(wf->sectors);
@@ -258,7 +258,7 @@ static AVIOContext * wtvfile_open2(AVFormatContext *s, const uint8_t *buf, int b
         dir_length  = AV_RL16(buf + 16);
         file_length = AV_RL64(buf + 24);
         name_size   = 2 * AV_RL32(buf + 32);
-        if (buf + 48 + name_size > buf_end) {
+        if (buf + 48 + (int64_t)name_size > buf_end || name_size<0) {
             av_log(s, AV_LOG_ERROR, "filename exceeds buffer size; remaining directory entries ignored\n");
             break;
         }
@@ -368,20 +368,30 @@ static int read_probe(AVProbeData *p)
 
 /**
  * Convert win32 FILETIME to ISO-8601 string
+ * @return <0 on error
  */
-static void filetime_to_iso8601(char *buf, int buf_size, int64_t value)
+static int filetime_to_iso8601(char *buf, int buf_size, int64_t value)
 {
     time_t t = (value / 10000000LL) - 11644473600LL;
+    struct tm *tm = gmtime(&t);
+    if (!tm)
+        return -1;
     strftime(buf, buf_size, "%Y-%m-%d %H:%M:%S", gmtime(&t));
+    return 0;
 }
 
 /**
  * Convert crazy time (100ns since 1 Jan 0001) to ISO-8601 string
+ * @return <0 on error
  */
-static void crazytime_to_iso8601(char *buf, int buf_size, int64_t value)
+static int crazytime_to_iso8601(char *buf, int buf_size, int64_t value)
 {
     time_t t = (value / 10000000LL) - 719162LL*86400LL;
+    struct tm *tm = gmtime(&t);
+    if (!tm)
+        return -1;
     strftime(buf, buf_size, "%Y-%m-%d %H:%M:%S", gmtime(&t));
+    return 0;
 }
 
 /**
@@ -451,12 +461,18 @@ static void get_tag(AVFormatContext *s, AVIOContext *pb, const char *key, int ty
     } else if (type == 4 && length == 8) {
         int64_t num = avio_rl64(pb);
         if (!strcmp(key, "WM/EncodingTime") ||
-            !strcmp(key, "WM/MediaOriginalBroadcastDateTime"))
-            filetime_to_iso8601(buf, buf_size, num);
-        else if (!strcmp(key, "WM/WMRVEncodeTime") ||
-                 !strcmp(key, "WM/WMRVEndTime"))
-            crazytime_to_iso8601(buf, buf_size, num);
-        else if (!strcmp(key, "WM/WMRVExpirationDate")) {
+            !strcmp(key, "WM/MediaOriginalBroadcastDateTime")) {
+            if (filetime_to_iso8601(buf, buf_size, num) < 0) {
+                av_free(buf);
+                return;
+            }
+        } else if (!strcmp(key, "WM/WMRVEncodeTime") ||
+                   !strcmp(key, "WM/WMRVEndTime")) {
+            if (crazytime_to_iso8601(buf, buf_size, num) < 0) {
+                av_free(buf);
+                return;
+            }
+        } else if (!strcmp(key, "WM/WMRVExpirationDate")) {
             if (oledate_to_iso8601(buf, buf_size, num) < 0 ) {
                 av_free(buf);
                 return;
@@ -522,7 +538,7 @@ static int parse_videoinfoheader2(AVFormatContext *s, AVStream *st)
     AVIOContext *pb = wtv->pb;
 
     avio_skip(pb, 72);  // picture aspect ratio is unreliable
-    ff_get_bmp_header(pb, st);
+    ff_get_bmp_header(pb, st, NULL);
 
     return 72 + 40;
 }
@@ -833,7 +849,7 @@ static int parse_chunks(AVFormatContext *s, int mode, int64_t seekts, int *len_p
             }
         } else if (!ff_guidcmp(g, ff_data_guid)) {
             int stream_index = ff_find_stream_index(s, sid);
-            if (mode == SEEK_TO_DATA && stream_index >= 0 && len > 32) {
+            if (mode == SEEK_TO_DATA && stream_index >= 0 && len > 32 && s->streams[stream_index]->priv_data) {
                 WtvStream *wst = s->streams[stream_index]->priv_data;
                 wst->seen_data = 1;
                 if (len_ptr) {

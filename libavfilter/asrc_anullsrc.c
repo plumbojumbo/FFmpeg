@@ -1,4 +1,7 @@
 /*
+ * Copyright 2010 S.N. Hemanth Meenakshisundaram <smeenaks ucsd edu>
+ * Copyright 2010 Stefano Sabatini <stefano.sabatini-lala poste it>
+ *
  * This file is part of FFmpeg.
  *
  * FFmpeg is free software; you can redistribute it and/or
@@ -21,9 +24,11 @@
  * null audio source
  */
 
+#include "internal.h"
 #include "libavutil/audioconvert.h"
 #include "libavutil/opt.h"
 
+#include "audio.h"
 #include "avfilter.h"
 #include "internal.h"
 
@@ -49,18 +54,9 @@ static const AVOption anullsrc_options[]= {
     { NULL },
 };
 
-static const char *anullsrc_get_name(void *ctx)
-{
-    return "anullsrc";
-}
+AVFILTER_DEFINE_CLASS(anullsrc);
 
-static const AVClass anullsrc_class = {
-    "ANullSrcContext",
-    anullsrc_get_name,
-    anullsrc_options
-};
-
-static int init(AVFilterContext *ctx, const char *args, void *opaque)
+static int init(AVFilterContext *ctx, const char *args)
 {
     ANullContext *null = ctx->priv;
     int ret;
@@ -95,7 +91,7 @@ static int config_props(AVFilterLink *outlink)
 
     chans_nb = av_get_channel_layout_nb_channels(null->channel_layout);
     av_get_channel_layout_string(buf, sizeof(buf), chans_nb, null->channel_layout);
-    av_log(outlink->src, AV_LOG_INFO,
+    av_log(outlink->src, AV_LOG_VERBOSE,
            "sample_rate:%d channel_layout:'%s' nb_samples:%d\n",
            null->sample_rate, buf, null->nb_samples);
 
@@ -108,13 +104,13 @@ static int request_frame(AVFilterLink *outlink)
     AVFilterBufferRef *samplesref;
 
     samplesref =
-        avfilter_get_audio_buffer(outlink, AV_PERM_WRITE, null->nb_samples);
+        ff_get_audio_buffer(outlink, AV_PERM_WRITE, null->nb_samples);
     samplesref->pts = null->pts;
     samplesref->pos = -1;
     samplesref->audio->channel_layout = null->channel_layout;
     samplesref->audio->sample_rate = outlink->sample_rate;
 
-    avfilter_filter_samples(outlink, avfilter_ref_buffer(samplesref, ~0));
+    ff_filter_samples(outlink, avfilter_ref_buffer(samplesref, ~0));
     avfilter_unref_buffer(samplesref);
 
     null->pts += null->nb_samples;

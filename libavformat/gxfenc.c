@@ -41,7 +41,6 @@ typedef struct GXFTimecode{
     int ff;
     int color;
     int drop;
-    char *str;
 } GXFTimecode;
 
 typedef struct GXFStreamContext {
@@ -555,17 +554,6 @@ static int gxf_write_umf_media_audio(AVIOContext *pb, GXFStreamContext *sc)
     return 32;
 }
 
-#if 0
-static int gxf_write_umf_media_mjpeg(AVIOContext *pb, GXFStreamContext *sc)
-{
-    avio_wb64(pb, 0); /* FIXME FLOAT max chroma quant level */
-    avio_wb64(pb, 0); /* FIXME FLOAT max luma quant level */
-    avio_wb64(pb, 0); /* FIXME FLOAT min chroma quant level */
-    avio_wb64(pb, 0); /* FIXME FLOAT min luma quant level */
-    return 32;
-}
-#endif
-
 static int gxf_write_umf_media_description(AVFormatContext *s)
 {
     GXFContext *gxf = s->priv_data;
@@ -666,11 +654,11 @@ static void gxf_init_timecode_track(GXFStreamContext *sc, GXFStreamContext *vsc)
     sc->fields = vsc->fields;
 }
 
-static int gxf_init_timecode(AVFormatContext *s, GXFTimecode *tc, int fields)
+static int gxf_init_timecode(AVFormatContext *s, GXFTimecode *tc, const char *tcstr, int fields)
 {
     char c;
 
-    if (sscanf(tc->str, "%d:%d:%d%c%d", &tc->hh, &tc->mm, &tc->ss, &c, &tc->ff) != 5) {
+    if (sscanf(tcstr, "%d:%d:%d%c%d", &tc->hh, &tc->mm, &tc->ss, &c, &tc->ff) != 5) {
         av_log(s, AV_LOG_ERROR, "unable to parse timecode, "
                                 "syntax: hh:mm:ss[:;.]ff\n");
         return -1;
@@ -692,6 +680,7 @@ static int gxf_write_header(AVFormatContext *s)
     GXFStreamContext *vsc = NULL;
     uint8_t tracks[255] = {0};
     int i, media_info = 0;
+    AVDictionaryEntry *tcr = av_dict_get(s->metadata, "timecode", NULL, 0);
 
     if (!pb->seekable) {
         av_log(s, AV_LOG_ERROR, "gxf muxer does not support streamed output, patch welcome");
@@ -752,6 +741,8 @@ static int gxf_write_header(AVFormatContext *s)
                        "gxf muxer only accepts PAL or NTSC resolutions currently\n");
                 return -1;
             }
+            if (!tcr)
+                tcr = av_dict_get(st->metadata, "timecode", NULL, 0);
             avpriv_set_pts_info(st, 64, gxf->time_base.num, gxf->time_base.den);
             if (gxf_find_lines_index(st) < 0)
                 sc->lines_index = -1;
@@ -803,9 +794,8 @@ static int gxf_write_header(AVFormatContext *s)
     if (ff_audio_interleave_init(s, GXF_samples_per_frame, (AVRational){ 1, 48000 }) < 0)
         return -1;
 
-    if (gxf->tc.str) {
-        gxf_init_timecode(s, &gxf->tc, vsc->fields);
-    }
+    if (tcr)
+        gxf_init_timecode(s, &gxf->tc, tcr->value, vsc->fields);
 
     gxf_init_timecode_track(&gxf->timecode_track, vsc);
     gxf->flags |= 0x200000; // time code track is non-drop frame
@@ -991,20 +981,8 @@ static int gxf_interleave_packet(AVFormatContext *s, AVPacket *out, AVPacket *pk
     if (pkt && s->streams[pkt->stream_index]->codec->codec_type == AVMEDIA_TYPE_VIDEO)
         pkt->duration = 2; // enforce 2 fields
     return ff_audio_rechunk_interleave(s, out, pkt, flush,
-                               av_interleave_packet_per_dts, gxf_compare_field_nb);
+                               ff_interleave_packet_per_dts, gxf_compare_field_nb);
 }
-
-static const AVOption options[] = {
-    { AV_TIMECODE_OPTION(GXFContext, tc.str, AV_OPT_FLAG_ENCODING_PARAM) },
-    { NULL }
-};
-
-static const AVClass gxf_muxer_class = {
-    .class_name     = "GXF muxer",
-    .item_name      = av_default_item_name,
-    .option         = options,
-    .version        = LIBAVUTIL_VERSION_INT,
-};
 
 AVOutputFormat ff_gxf_muxer = {
     .name              = "gxf",
@@ -1017,5 +995,4 @@ AVOutputFormat ff_gxf_muxer = {
     .write_packet      = gxf_write_packet,
     .write_trailer     = gxf_write_trailer,
     .interleave_packet = gxf_interleave_packet,
-    .priv_class        = &gxf_muxer_class,
 };

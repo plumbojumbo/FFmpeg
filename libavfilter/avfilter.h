@@ -22,22 +22,13 @@
 #ifndef AVFILTER_AVFILTER_H
 #define AVFILTER_AVFILTER_H
 
+#include <stddef.h>
+
 #include "libavutil/avutil.h"
 #include "libavutil/log.h"
 #include "libavutil/samplefmt.h"
 #include "libavutil/pixfmt.h"
 #include "libavutil/rational.h"
-#include "libavcodec/avcodec.h"
-
-
-#ifndef FF_API_OLD_VSINK_API
-#define FF_API_OLD_VSINK_API        (LIBAVFILTER_VERSION_MAJOR < 3)
-#endif
-#ifndef FF_API_OLD_ALL_FORMATS_API
-#define FF_API_OLD_ALL_FORMATS_API (LIBAVFILTER_VERSION_MAJOR < 3)
-#endif
-
-#include <stddef.h>
 
 #include "libavfilter/version.h"
 
@@ -60,6 +51,7 @@ const char *avfilter_license(void);
 typedef struct AVFilterContext AVFilterContext;
 typedef struct AVFilterLink    AVFilterLink;
 typedef struct AVFilterPad     AVFilterPad;
+typedef struct AVFilterFormats AVFilterFormats;
 
 /**
  * A reference-counted buffer data type used by the filter system. Filters
@@ -68,9 +60,23 @@ typedef struct AVFilterPad     AVFilterPad;
  */
 typedef struct AVFilterBuffer {
     uint8_t *data[8];           ///< buffer data for each plane/channel
-    int linesize[8];            ///< number of bytes per line
 
-    unsigned refcount;          ///< number of references to this buffer
+    /**
+     * pointers to the data planes/channels.
+     *
+     * For video, this should simply point to data[].
+     *
+     * For planar audio, each channel has a separate data pointer, and
+     * linesize[0] contains the size of each channel buffer.
+     * For packed audio, there is just one data pointer, and linesize[0]
+     * contains the total size of the buffer for all channels.
+     *
+     * Note: Both data and extended_data will always be set, but for planar
+     * audio with more channels that can fit in data, extended_data must be used
+     * in order to access all channels.
+     */
+    uint8_t **extended_data;
+    int linesize[8];            ///< number of bytes per line
 
     /** private data to be used by a custom free function */
     void *priv;
@@ -84,6 +90,7 @@ typedef struct AVFilterBuffer {
 
     int format;                 ///< media format
     int w, h;                   ///< width and height of the allocated buffer
+    unsigned refcount;          ///< number of references to this buffer
 } AVFilterBuffer;
 
 #define AV_PERM_READ     0x01   ///< can read from the buffer
@@ -105,7 +112,6 @@ typedef struct AVFilterBufferRefAudioProps {
     uint64_t channel_layout;    ///< channel layout of audio buffer
     int nb_samples;             ///< number of audio samples per channel
     int sample_rate;            ///< audio buffer sample rate
-    int planar;                 ///< audio buffer - planar or packed
 } AVFilterBufferRefAudioProps;
 
 /**
@@ -134,8 +140,25 @@ typedef struct AVFilterBufferRefVideoProps {
 typedef struct AVFilterBufferRef {
     AVFilterBuffer *buf;        ///< the buffer that this is a reference to
     uint8_t *data[8];           ///< picture/audio data for each plane
+    /**
+     * pointers to the data planes/channels.
+     *
+     * For video, this should simply point to data[].
+     *
+     * For planar audio, each channel has a separate data pointer, and
+     * linesize[0] contains the size of each channel buffer.
+     * For packed audio, there is just one data pointer, and linesize[0]
+     * contains the total size of the buffer for all channels.
+     *
+     * Note: Both data and extended_data will always be set, but for planar
+     * audio with more channels that can fit in data, extended_data must be used
+     * in order to access all channels.
+     */
+    uint8_t **extended_data;
     int linesize[8];            ///< number of bytes per line
-    int format;                 ///< media format
+
+    AVFilterBufferRefVideoProps *video; ///< video buffer specific properties
+    AVFilterBufferRefAudioProps *audio; ///< audio buffer specific properties
 
     /**
      * presentation timestamp. The time unit may change during
@@ -145,28 +168,17 @@ typedef struct AVFilterBufferRef {
     int64_t pts;
     int64_t pos;                ///< byte position in stream, -1 if unknown
 
+    int format;                 ///< media format
+
     int perms;                  ///< permissions, see the AV_PERM_* flags
 
     enum AVMediaType type;      ///< media type of buffer data
-    AVFilterBufferRefVideoProps *video; ///< video buffer specific properties
-    AVFilterBufferRefAudioProps *audio; ///< audio buffer specific properties
 } AVFilterBufferRef;
 
 /**
  * Copy properties of src to dst, without copying the actual data
  */
-static inline void avfilter_copy_buffer_ref_props(AVFilterBufferRef *dst, AVFilterBufferRef *src)
-{
-    // copy common properties
-    dst->pts             = src->pts;
-    dst->pos             = src->pos;
-
-    switch (src->type) {
-    case AVMEDIA_TYPE_VIDEO: *dst->video = *src->video; break;
-    case AVMEDIA_TYPE_AUDIO: *dst->audio = *src->audio; break;
-    default: break;
-    }
-}
+void avfilter_copy_buffer_ref_props(AVFilterBufferRef *dst, AVFilterBufferRef *src);
 
 /**
  * Add a new reference to a buffer.
@@ -188,161 +200,25 @@ AVFilterBufferRef *avfilter_ref_buffer(AVFilterBufferRef *ref, int pmask);
 void avfilter_unref_buffer(AVFilterBufferRef *ref);
 
 /**
- * A list of supported formats for one end of a filter link. This is used
- * during the format negotiation process to try to pick the best format to
- * use to minimize the number of necessary conversions. Each filter gives a
- * list of the formats supported by each input and output pad. The list
- * given for each pad need not be distinct - they may be references to the
- * same list of formats, as is often the case when a filter supports multiple
- * formats, but will always output the same format as it is given in input.
+ * Remove a reference to a buffer and set the pointer to NULL.
+ * If this is the last reference to the buffer, the buffer itself
+ * is also automatically freed.
  *
- * In this way, a list of possible input formats and a list of possible
- * output formats are associated with each link. When a set of formats is
- * negotiated over a link, the input and output lists are merged to form a
- * new list containing only the common elements of each list. In the case
- * that there were no common elements, a format conversion is necessary.
- * Otherwise, the lists are merged, and all other links which reference
- * either of the format lists involved in the merge are also affected.
- *
- * For example, consider the filter chain:
- * filter (a) --> (b) filter (b) --> (c) filter
- *
- * where the letters in parenthesis indicate a list of formats supported on
- * the input or output of the link. Suppose the lists are as follows:
- * (a) = {A, B}
- * (b) = {A, B, C}
- * (c) = {B, C}
- *
- * First, the first link's lists are merged, yielding:
- * filter (a) --> (a) filter (a) --> (c) filter
- *
- * Notice that format list (b) now refers to the same list as filter list (a).
- * Next, the lists for the second link are merged, yielding:
- * filter (a) --> (a) filter (a) --> (a) filter
- *
- * where (a) = {B}.
- *
- * Unfortunately, when the format lists at the two ends of a link are merged,
- * we must ensure that all links which reference either pre-merge format list
- * get updated as well. Therefore, we have the format list structure store a
- * pointer to each of the pointers to itself.
+ * @param ref pointer to the buffer reference
  */
-typedef struct AVFilterFormats {
-    unsigned format_count;      ///< number of formats
-    int64_t *formats;           ///< list of media formats
+void avfilter_unref_bufferp(AVFilterBufferRef **ref);
 
-    unsigned refcount;          ///< number of references to this list
-    struct AVFilterFormats ***refs; ///< references to this list
-}  AVFilterFormats;
 
-/**
- * Create a list of supported formats. This is intended for use in
- * AVFilter->query_formats().
- *
- * @param fmts list of media formats, terminated by -1. If NULL an
- *        empty list is created.
- * @return the format list, with no existing references
- */
-AVFilterFormats *avfilter_make_format_list(const int *fmts);
-AVFilterFormats *avfilter_make_format64_list(const int64_t *fmts);
-
-/**
- * Add fmt to the list of media formats contained in *avff.
- * If *avff is NULL the function allocates the filter formats struct
- * and puts its pointer in *avff.
- *
- * @return a non negative value in case of success, or a negative
- * value corresponding to an AVERROR code in case of error
- */
-int avfilter_add_format(AVFilterFormats **avff, int64_t fmt);
-
-#if FF_API_OLD_ALL_FORMATS_API
-/**
- * @deprecated Use avfilter_make_all_formats() instead.
- */
-attribute_deprecated
-AVFilterFormats *avfilter_all_formats(enum AVMediaType type);
-#endif
-
-/**
- * Return a list of all formats supported by FFmpeg for the given media type.
- */
-AVFilterFormats *avfilter_make_all_formats(enum AVMediaType type);
-
-/**
- * A list of all channel layouts supported by libavfilter.
- */
-extern const int64_t avfilter_all_channel_layouts[];
-
-/**
- * Return a list of all channel layouts supported by FFmpeg.
- */
-AVFilterFormats *avfilter_make_all_channel_layouts(void);
-
-/**
- * Return a list of all audio packing formats.
- */
-AVFilterFormats *avfilter_make_all_packing_formats(void);
-
-/**
- * Return a format list which contains the intersection of the formats of
- * a and b. Also, all the references of a, all the references of b, and
- * a and b themselves will be deallocated.
- *
- * If a and b do not share any common formats, neither is modified, and NULL
- * is returned.
- */
-AVFilterFormats *avfilter_merge_formats(AVFilterFormats *a, AVFilterFormats *b);
-
-/**
- * Add *ref as a new reference to formats.
- * That is the pointers will point like in the ASCII art below:
- *   ________
- *  |formats |<--------.
- *  |  ____  |     ____|___________________
- *  | |refs| |    |  __|_
- *  | |* * | |    | |  | |  AVFilterLink
- *  | |* *--------->|*ref|
- *  | |____| |    | |____|
- *  |________|    |________________________
- */
-void avfilter_formats_ref(AVFilterFormats *formats, AVFilterFormats **ref);
-
-/**
- * If *ref is non-NULL, remove *ref as a reference to the format list
- * it currently points to, deallocates that list if this was the last
- * reference, and sets *ref to NULL.
- *
- *         Before                                 After
- *   ________                               ________         NULL
- *  |formats |<--------.                   |formats |         ^
- *  |  ____  |     ____|________________   |  ____  |     ____|________________
- *  | |refs| |    |  __|_                  | |refs| |    |  __|_
- *  | |* * | |    | |  | |  AVFilterLink   | |* * | |    | |  | |  AVFilterLink
- *  | |* *--------->|*ref|                 | |*   | |    | |*ref|
- *  | |____| |    | |____|                 | |____| |    | |____|
- *  |________|    |_____________________   |________|    |_____________________
- */
-void avfilter_formats_unref(AVFilterFormats **ref);
-
-/**
- *
- *         Before                                 After
- *   ________                         ________
- *  |formats |<---------.            |formats |<---------.
- *  |  ____  |       ___|___         |  ____  |       ___|___
- *  | |refs| |      |   |   |        | |refs| |      |   |   |   NULL
- *  | |* *--------->|*oldref|        | |* *--------->|*newref|     ^
- *  | |* * | |      |_______|        | |* * | |      |_______|  ___|___
- *  | |____| |                       | |____| |                |   |   |
- *  |________|                       |________|                |*oldref|
- *                                                             |_______|
- */
-void avfilter_formats_changeref(AVFilterFormats **oldref,
-                                AVFilterFormats **newref);
-
+#if FF_API_AVFILTERPAD_PUBLIC
 /**
  * A filter pad used for either input or output.
+ *
+ * See doc/filter_design.txt for details on how to implement the methods.
+ *
+ * @warning this struct might be removed from public API.
+ * users should call avfilter_pad_get_name() and avfilter_pad_get_type()
+ * to access the name and type fields; there should be no need to access
+ * any other fields from outside of libavfilter.
  */
 struct AVFilterPad {
     /**
@@ -353,7 +229,7 @@ struct AVFilterPad {
     const char *name;
 
     /**
-     * AVFilterPad type. Can be AVMEDIA_TYPE_VIDEO or AVMEDIA_TYPE_AUDIO.
+     * AVFilterPad type.
      */
     enum AVMediaType type;
 
@@ -400,7 +276,8 @@ struct AVFilterPad {
      *
      * Input audio pads only.
      */
-    AVFilterBufferRef *(*get_audio_buffer)(AVFilterLink *link, int perms, int nb_samples);
+    AVFilterBufferRef *(*get_audio_buffer)(AVFilterLink *link, int perms,
+                                           int nb_samples);
 
     /**
      * Callback called after the slices of a frame are completely sent. If
@@ -424,8 +301,12 @@ struct AVFilterPad {
      * and should do its processing.
      *
      * Input audio pads only.
+     *
+     * @return >= 0 on success, a negative AVERROR on error. This function
+     * must ensure that samplesref is properly unreferenced on error if it
+     * hasn't been passed on to another filter.
      */
-    void (*filter_samples)(AVFilterLink *link, AVFilterBufferRef *samplesref);
+    int (*filter_samples)(AVFilterLink *link, AVFilterBufferRef *samplesref);
 
     /**
      * Frame poll callback. This returns the number of immediately available
@@ -434,7 +315,7 @@ struct AVFilterPad {
      *
      * Defaults to just calling the source poll_frame() method.
      *
-     * Output video pads only.
+     * Output pads only.
      */
     int (*poll_frame)(AVFilterLink *link);
 
@@ -442,8 +323,10 @@ struct AVFilterPad {
      * Frame request callback. A call to this should result in at least one
      * frame being output over the given link. This should return zero on
      * success, and another value on error.
+     * See ff_request_frame() for the error codes with a specific
+     * meaning.
      *
-     * Output video pads only.
+     * Output pads only.
      */
     int (*request_frame)(AVFilterLink *link);
 
@@ -465,60 +348,42 @@ struct AVFilterPad {
      * and another value on error.
      */
     int (*config_props)(AVFilterLink *link);
+
+    /**
+     * The filter expects a fifo to be inserted on its input link,
+     * typically because it has a delay.
+     *
+     * input pads only.
+     */
+    int needs_fifo;
 };
-
-/** default handler for start_frame() for video inputs */
-void avfilter_default_start_frame(AVFilterLink *link, AVFilterBufferRef *picref);
-
-/** default handler for draw_slice() for video inputs */
-void avfilter_default_draw_slice(AVFilterLink *link, int y, int h, int slice_dir);
-
-/** default handler for end_frame() for video inputs */
-void avfilter_default_end_frame(AVFilterLink *link);
-
-/** default handler for filter_samples() for audio inputs */
-void avfilter_default_filter_samples(AVFilterLink *link, AVFilterBufferRef *samplesref);
-
-/** default handler for get_video_buffer() for video inputs */
-AVFilterBufferRef *avfilter_default_get_video_buffer(AVFilterLink *link,
-                                                     int perms, int w, int h);
-
-/** default handler for get_audio_buffer() for audio inputs */
-AVFilterBufferRef *avfilter_default_get_audio_buffer(AVFilterLink *link,
-                                                     int perms, int nb_samples);
+#endif
 
 /**
- * Helpers for query_formats() which set all links to the same list of
- * formats/layouts. If there are no links hooked to this filter, the list
- * of formats is freed.
+ * Get the name of an AVFilterPad.
+ *
+ * @param pads an array of AVFilterPads
+ * @param pad_idx index of the pad in the array it; is the caller's
+ *                responsibility to ensure the index is valid
+ *
+ * @return name of the pad_idx'th pad in pads
  */
-void avfilter_set_common_pixel_formats(AVFilterContext *ctx, AVFilterFormats *formats);
-void avfilter_set_common_sample_formats(AVFilterContext *ctx, AVFilterFormats *formats);
-void avfilter_set_common_channel_layouts(AVFilterContext *ctx, AVFilterFormats *formats);
-void avfilter_set_common_packing_formats(AVFilterContext *ctx, AVFilterFormats *formats);
+const char *avfilter_pad_get_name(AVFilterPad *pads, int pad_idx);
 
-/** Default handler for query_formats() */
-int avfilter_default_query_formats(AVFilterContext *ctx);
+/**
+ * Get the type of an AVFilterPad.
+ *
+ * @param pads an array of AVFilterPads
+ * @param pad_idx index of the pad in the array; it is the caller's
+ *                responsibility to ensure the index is valid
+ *
+ * @return type of the pad_idx'th pad in pads
+ */
+enum AVMediaType avfilter_pad_get_type(AVFilterPad *pads, int pad_idx);
 
-/** start_frame() handler for filters which simply pass video along */
-void avfilter_null_start_frame(AVFilterLink *link, AVFilterBufferRef *picref);
-
-/** draw_slice() handler for filters which simply pass video along */
-void avfilter_null_draw_slice(AVFilterLink *link, int y, int h, int slice_dir);
-
-/** end_frame() handler for filters which simply pass video along */
-void avfilter_null_end_frame(AVFilterLink *link);
-
-/** filter_samples() handler for filters which simply pass audio along */
-void avfilter_null_filter_samples(AVFilterLink *link, AVFilterBufferRef *samplesref);
-
-/** get_video_buffer() handler for filters which simply pass video along */
-AVFilterBufferRef *avfilter_null_get_video_buffer(AVFilterLink *link,
-                                                  int perms, int w, int h);
-
-/** get_audio_buffer() handler for filters which simply pass audio along */
-AVFilterBufferRef *avfilter_null_get_audio_buffer(AVFilterLink *link,
-                                                  int perms, int nb_samples);
+/** default handler for end_frame() for video inputs */
+attribute_deprecated
+void avfilter_default_end_frame(AVFilterLink *link);
 
 /**
  * Filter definition. This defines the pads a filter contains, and all the
@@ -527,15 +392,28 @@ AVFilterBufferRef *avfilter_null_get_audio_buffer(AVFilterLink *link,
 typedef struct AVFilter {
     const char *name;         ///< filter name
 
-    int priv_size;      ///< size of private data to allocate for the filter
+    /**
+     * A description for the filter. You should use the
+     * NULL_IF_CONFIG_SMALL() macro to define it.
+     */
+    const char *description;
+
+    const AVFilterPad *inputs;  ///< NULL terminated list of inputs. NULL if none
+    const AVFilterPad *outputs; ///< NULL terminated list of outputs. NULL if none
+
+    /*****************************************************************
+     * All fields below this line are not part of the public API. They
+     * may not be used outside of libavfilter and can be changed and
+     * removed at will.
+     * New public fields should be added right above.
+     *****************************************************************
+     */
 
     /**
      * Filter initialization function. Args contains the user-supplied
      * parameters. FIXME: maybe an AVOption-based system would be better?
-     * opaque is data provided by the code requesting creation of the filter,
-     * and is used to pass data to the filter.
      */
-    int (*init)(AVFilterContext *ctx, const char *args, void *opaque);
+    int (*init)(AVFilterContext *ctx, const char *args);
 
     /**
      * Filter uninitialization function. Should deallocate any memory held
@@ -554,14 +432,7 @@ typedef struct AVFilter {
      */
     int (*query_formats)(AVFilterContext *);
 
-    const AVFilterPad *inputs;  ///< NULL terminated list of inputs. NULL if none
-    const AVFilterPad *outputs; ///< NULL terminated list of outputs. NULL if none
-
-    /**
-     * A description for the filter. You should use the
-     * NULL_IF_CONFIG_SMALL() macro to define it.
-     */
-    const char *description;
+    int priv_size;      ///< size of private data to allocate for the filter
 
     /**
      * Make the filter instance process a command.
@@ -576,6 +447,13 @@ typedef struct AVFilter {
      *          AVERROR(ENOSYS) on unsupported commands
      */
     int (*process_command)(AVFilterContext *, const char *cmd, const char *arg, char *res, int res_len, int flags);
+
+    /**
+     * Filter initialization function, alternative to the init()
+     * callback. Args contains the user-supplied parameters, opaque is
+     * used for providing binary data.
+     */
+    int (*init_opaque)(AVFilterContext *ctx, const char *args, void *opaque);
 } AVFilter;
 
 /** An instance of a filter */
@@ -586,22 +464,23 @@ struct AVFilterContext {
 
     char *name;                     ///< name of this filter instance
 
-    unsigned input_count;           ///< number of input pads
     AVFilterPad   *input_pads;      ///< array of input pads
     AVFilterLink **inputs;          ///< array of pointers to input links
+#if FF_API_FOO_COUNT
+    unsigned input_count;           ///< @deprecated use nb_inputs
+#endif
+    unsigned    nb_inputs;          ///< number of input pads
 
-    unsigned output_count;          ///< number of output pads
     AVFilterPad   *output_pads;     ///< array of output pads
     AVFilterLink **outputs;         ///< array of pointers to output links
+#if FF_API_FOO_COUNT
+    unsigned output_count;          ///< @deprecated use nb_outputs
+#endif
+    unsigned    nb_outputs;         ///< number of output pads
 
     void *priv;                     ///< private data for use by the filter
 
     struct AVFilterCommand *command_queue;
-};
-
-enum AVFilterPacking {
-    AVFILTER_PACKED = 0,
-    AVFILTER_PLANAR,
 };
 
 /**
@@ -618,13 +497,6 @@ struct AVFilterLink {
     AVFilterContext *dst;       ///< dest filter
     AVFilterPad *dstpad;        ///< input pad on the dest filter
 
-    /** stage of the initialization of the link properties (dimensions, etc) */
-    enum {
-        AVLINK_UNINIT = 0,      ///< not started
-        AVLINK_STARTINIT,       ///< started, but incomplete
-        AVLINK_INIT             ///< complete
-    } init_state;
-
     enum AVMediaType type;      ///< filter media type
 
     /* These parameters apply only to video */
@@ -633,15 +505,26 @@ struct AVFilterLink {
     AVRational sample_aspect_ratio; ///< agreed upon sample aspect ratio
     /* These parameters apply only to audio */
     uint64_t channel_layout;    ///< channel layout of current buffer (see libavutil/audioconvert.h)
-#if LIBAVFILTER_VERSION_MAJOR < 3
-    int64_t sample_rate;        ///< samples per second
-#else
     int sample_rate;            ///< samples per second
-#endif
-    int planar;                 ///< agreed upon packing mode of audio buffers. true if planar.
 
     int format;                 ///< agreed upon media format
 
+    /**
+     * Define the time base used by the PTS of the frames/samples
+     * which will pass through this link.
+     * During the configuration stage, each filter is supposed to
+     * change only the output timebase, while the timebase of the
+     * input link is assumed to be an unchangeable property.
+     */
+    AVRational time_base;
+
+    /*****************************************************************
+     * All fields below this line are not part of the public API. They
+     * may not be used outside of libavfilter and can be changed and
+     * removed at will.
+     * New public fields should be added right above.
+     *****************************************************************
+     */
     /**
      * Lists of formats and channel layouts supported by the input and output
      * filters respectively. These lists are used for negotiating the format
@@ -652,10 +535,30 @@ struct AVFilterLink {
     AVFilterFormats *in_formats;
     AVFilterFormats *out_formats;
 
-    AVFilterFormats *in_chlayouts;
-    AVFilterFormats *out_chlayouts;
-    AVFilterFormats *in_packing;
-    AVFilterFormats *out_packing;
+    /**
+     * Lists of channel layouts and sample rates used for automatic
+     * negotiation.
+     */
+    AVFilterFormats  *in_samplerates;
+    AVFilterFormats *out_samplerates;
+    struct AVFilterChannelLayouts  *in_channel_layouts;
+    struct AVFilterChannelLayouts *out_channel_layouts;
+
+    /**
+     * Audio only, the destination filter sets this to a non-zero value to
+     * request that buffers with the given number of samples should be sent to
+     * it. AVFilterPad.needs_fifo must also be set on the corresponding input
+     * pad.
+     * Last buffer before EOF will be padded with silence.
+     */
+    int request_samples;
+
+    /** stage of the initialization of the link properties (dimensions, etc) */
+    enum {
+        AVLINK_UNINIT = 0,      ///< not started
+        AVLINK_STARTINIT,       ///< started, but incomplete
+        AVLINK_INIT             ///< complete
+    } init_state;
 
     /**
      * The buffer reference currently being sent across the link by the source
@@ -669,16 +572,61 @@ struct AVFilterLink {
     AVFilterBufferRef *cur_buf;
     AVFilterBufferRef *out_buf;
 
-    /**
-     * Define the time base used by the PTS of the frames/samples
-     * which will pass through this link.
-     * During the configuration stage, each filter is supposed to
-     * change only the output timebase, while the timebase of the
-     * input link is assumed to be an unchangeable property.
-     */
-    AVRational time_base;
-
     struct AVFilterPool *pool;
+
+    /**
+     * Graph the filter belongs to.
+     */
+    struct AVFilterGraph *graph;
+
+    /**
+     * Current timestamp of the link, as defined by the most recent
+     * frame(s), in AV_TIME_BASE units.
+     */
+    int64_t current_pts;
+
+    /**
+     * Index in the age array.
+     */
+    int age_index;
+
+    /**
+     * Frame rate of the stream on the link, or 1/0 if unknown;
+     * if left to 0/0, will be automatically be copied from the first input
+     * of the source filter if it exists.
+     *
+     * Sources should set it to the best estimation of the real frame rate.
+     * Filters should update it if necessary depending on their function.
+     * Sinks can use it to set a default output frame rate.
+     * It is similar to the r_frae_rate field in AVStream.
+     */
+    AVRational frame_rate;
+
+    /**
+     * Buffer partially filled with samples to achieve a fixed/minimum size.
+     */
+    AVFilterBufferRef *partial_buf;
+
+    /**
+     * Size of the partial buffer to allocate.
+     * Must be between min_samples and max_samples.
+     */
+    int partial_buf_size;
+
+    /**
+     * Minimum number of samples to filter at once. If filter_samples() is
+     * called with fewer samples, it will accumulate them in partial_buf.
+     * This field and the related ones must not be changed after filtering
+     * has started.
+     * If 0, all related fields are ignored.
+     */
+    int min_samples;
+
+    /**
+     * Maximum number of samples to filter at once. If filter_samples() is
+     * called with more samples, it will split them.
+     */
+    int max_samples;
 };
 
 /**
@@ -707,20 +655,6 @@ void avfilter_link_free(AVFilterLink **link);
 int avfilter_config_links(AVFilterContext *filter);
 
 /**
- * Request a picture buffer with a specific set of permissions.
- *
- * @param link  the output link to the filter from which the buffer will
- *              be requested
- * @param perms the required access permissions
- * @param w     the minimum width of the buffer to allocate
- * @param h     the minimum height of the buffer to allocate
- * @return      A reference to the buffer. This must be unreferenced with
- *              avfilter_unref_buffer when you are finished with it.
- */
-AVFilterBufferRef *avfilter_get_video_buffer(AVFilterLink *link, int perms,
-                                          int w, int h);
-
-/**
  * Create a buffer reference wrapped around an already allocated image
  * buffer.
  *
@@ -736,19 +670,6 @@ avfilter_get_video_buffer_ref_from_arrays(uint8_t * const data[4], const int lin
                                           int w, int h, enum PixelFormat format);
 
 /**
- * Request an audio samples buffer with a specific set of permissions.
- *
- * @param link           the output link to the filter from which the buffer will
- *                       be requested
- * @param perms          the required access permissions
- * @param nb_samples     the number of samples per channel
- * @return               A reference to the samples. This must be unreferenced with
- *                       avfilter_unref_buffer when you are finished with it.
- */
-AVFilterBufferRef *avfilter_get_audio_buffer(AVFilterLink *link, int perms,
-                                             int nb_samples);
-
-/**
  * Create an audio buffer reference wrapped around an already
  * allocated samples buffer.
  *
@@ -758,63 +679,14 @@ AVFilterBufferRef *avfilter_get_audio_buffer(AVFilterLink *link, int perms,
  * @param nb_samples     number of samples per channel
  * @param sample_fmt     the format of each sample in the buffer to allocate
  * @param channel_layout the channel layout of the buffer
- * @param planar         audio data layout - planar or packed
  */
-AVFilterBufferRef *
-avfilter_get_audio_buffer_ref_from_arrays(uint8_t *data[8], int linesize[8], int perms,
-                                          int nb_samples, enum AVSampleFormat sample_fmt,
-                                          uint64_t channel_layout, int planar);
-/**
- * Request an input frame from the filter at the other end of the link.
- *
- * @param link the input link
- * @return     zero on success
- */
-int avfilter_request_frame(AVFilterLink *link);
+AVFilterBufferRef *avfilter_get_audio_buffer_ref_from_arrays(uint8_t **data,
+                                                             int linesize,
+                                                             int perms,
+                                                             int nb_samples,
+                                                             enum AVSampleFormat sample_fmt,
+                                                             uint64_t channel_layout);
 
-/**
- * Poll a frame from the filter chain.
- *
- * @param  link the input link
- * @return the number of immediately available frames, a negative
- * number in case of error
- */
-int avfilter_poll_frame(AVFilterLink *link);
-
-/**
- * Notify the next filter of the start of a frame.
- *
- * @param link   the output link the frame will be sent over
- * @param picref A reference to the frame about to be sent. The data for this
- *               frame need only be valid once draw_slice() is called for that
- *               portion. The receiving filter will free this reference when
- *               it no longer needs it.
- */
-void avfilter_start_frame(AVFilterLink *link, AVFilterBufferRef *picref);
-
-/**
- * Notify the next filter that the current frame has finished.
- *
- * @param link the output link the frame was sent over
- */
-void avfilter_end_frame(AVFilterLink *link);
-
-/**
- * Send a slice to the next filter.
- *
- * Slices have to be provided in sequential order, either in
- * top-bottom or bottom-top order. If slices are provided in
- * non-sequential order the behavior of the function is undefined.
- *
- * @param link the output link over which the frame is being sent
- * @param y    offset in pixels from the top of the image for this slice
- * @param h    height of this slice in pixels
- * @param slice_dir the assumed direction for sending slices,
- *             from the top slice to the bottom slice if the value is 1,
- *             from the bottom slice to the top slice if the value is -1,
- *             for other values the behavior of the function is undefined.
- */
-void avfilter_draw_slice(AVFilterLink *link, int y, int h, int slice_dir);
 
 #define AVFILTER_CMD_FLAG_ONE   1 ///< Stop once a filter understood the command (for target=all for example), fast filters are favored automatically
 #define AVFILTER_CMD_FLAG_FAST  2 ///< Only execute command when its fast (like a video out that supports contrast adjustment in hw)
@@ -825,17 +697,7 @@ void avfilter_draw_slice(AVFilterLink *link, int y, int h, int slice_dir);
  */
 int avfilter_process_command(AVFilterContext *filter, const char *cmd, const char *arg, char *res, int res_len, int flags);
 
-/**
- * Send a buffer of audio samples to the next filter.
- *
- * @param link       the output link over which the audio samples are being sent
- * @param samplesref a reference to the buffer of audio samples being sent. The
- *                   receiving filter will free this reference when it no longer
- *                   needs it or pass it on to the next filter.
- */
-void avfilter_filter_samples(AVFilterLink *link, AVFilterBufferRef *samplesref);
-
-/** Initialize the filter system. Register all built-in filters. */
+/** Initialize the filter system. Register all builtin filters. */
 void avfilter_register_all(void);
 
 /** Uninitialize the filter system. Unregister all filters. */
@@ -911,38 +773,5 @@ void avfilter_free(AVFilterContext *filter);
  */
 int avfilter_insert_filter(AVFilterLink *link, AVFilterContext *filt,
                            unsigned filt_srcpad_idx, unsigned filt_dstpad_idx);
-
-/**
- * Insert a new pad.
- *
- * @param idx Insertion point. Pad is inserted at the end if this point
- *            is beyond the end of the list of pads.
- * @param count Pointer to the number of pads in the list
- * @param padidx_off Offset within an AVFilterLink structure to the element
- *                   to increment when inserting a new pad causes link
- *                   numbering to change
- * @param pads Pointer to the pointer to the beginning of the list of pads
- * @param links Pointer to the pointer to the beginning of the list of links
- * @param newpad The new pad to add. A copy is made when adding.
- */
-void avfilter_insert_pad(unsigned idx, unsigned *count, size_t padidx_off,
-                         AVFilterPad **pads, AVFilterLink ***links,
-                         AVFilterPad *newpad);
-
-/** Insert a new input pad for the filter. */
-static inline void avfilter_insert_inpad(AVFilterContext *f, unsigned index,
-                                         AVFilterPad *p)
-{
-    avfilter_insert_pad(index, &f->input_count, offsetof(AVFilterLink, dstpad),
-                        &f->input_pads, &f->inputs, p);
-}
-
-/** Insert a new output pad for the filter. */
-static inline void avfilter_insert_outpad(AVFilterContext *f, unsigned index,
-                                          AVFilterPad *p)
-{
-    avfilter_insert_pad(index, &f->output_count, offsetof(AVFilterLink, srcpad),
-                        &f->output_pads, &f->outputs, p);
-}
 
 #endif /* AVFILTER_AVFILTER_H */

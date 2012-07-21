@@ -25,6 +25,7 @@
 #include "riff.h"
 #include "libavutil/intreadwrite.h"
 #include "libavutil/dict.h"
+#include "libavutil/avassert.h"
 
 /*
  * TODO:
@@ -130,7 +131,7 @@ static int avi_write_counters(AVFormatContext* s, int riff_id)
     for(n = 0; n < s->nb_streams; n++) {
         AVIStream *avist= s->streams[n]->priv_data;
 
-        assert(avist->frames_hdr_strm);
+        av_assert0(avist->frames_hdr_strm);
         stream = s->streams[n]->codec;
         avio_seek(pb, avist->frames_hdr_strm, SEEK_SET);
         ff_parse_specific_params(stream, &au_byterate, &au_ssize, &au_scale);
@@ -143,7 +144,7 @@ static int avi_write_counters(AVFormatContext* s, int riff_id)
             nb_frames = FFMAX(nb_frames, avist->packet_count);
     }
     if(riff_id == 1) {
-        assert(avi->frames_hdr_all);
+        av_assert0(avi->frames_hdr_all);
         avio_seek(pb, avi->frames_hdr_all, SEEK_SET);
         avio_wl32(pb, nb_frames);
     }
@@ -255,9 +256,12 @@ static int avi_write_header(AVFormatContext *s)
 
         ff_parse_specific_params(stream, &au_byterate, &au_ssize, &au_scale);
 
+        avpriv_set_pts_info(s->streams[i], 64, au_scale, au_byterate);
+        if(stream->codec_id == CODEC_ID_XSUB)
+            au_scale = au_byterate = 0;
+
         avio_wl32(pb, au_scale); /* scale */
         avio_wl32(pb, au_byterate); /* rate */
-        avpriv_set_pts_info(s->streams[i], 64, au_scale, au_byterate);
 
         avio_wl32(pb, 0); /* start */
         avist->frames_hdr_strm = avio_tell(pb); /* remember this offset to fill later */
@@ -408,7 +412,7 @@ static int avi_write_ix(AVFormatContext *s)
     char ix_tag[] = "ix00";
     int i, j;
 
-    assert(pb->seekable);
+    av_assert0(pb->seekable);
 
     if (avi->riff_id > AVI_MASTER_INDEX_SIZE)
         return -1;
@@ -521,7 +525,7 @@ static int avi_write_packet(AVFormatContext *s, AVPacket *pkt)
     int size= pkt->size;
 
 //    av_log(s, AV_LOG_DEBUG, "%"PRId64" %d %d\n", pkt->dts, avist->packet_count, stream_index);
-    while(enc->block_align==0 && pkt->dts != AV_NOPTS_VALUE && pkt->dts > avist->packet_count){
+    while(enc->block_align==0 && pkt->dts != AV_NOPTS_VALUE && pkt->dts > avist->packet_count && enc->codec_id != CODEC_ID_XSUB){
         AVPacket empty_packet;
 
         if(pkt->dts - avist->packet_count > 60000){
@@ -659,6 +663,8 @@ AVOutputFormat ff_avi_muxer = {
     .write_header      = avi_write_header,
     .write_packet      = avi_write_packet,
     .write_trailer     = avi_write_trailer,
-    .codec_tag= (const AVCodecTag* const []){ff_codec_bmp_tags, ff_codec_wav_tags, 0},
-    .flags= AVFMT_VARIABLE_FPS,
+    .codec_tag         = (const AVCodecTag* const []){
+        ff_codec_bmp_tags, ff_codec_wav_tags, 0
+    },
+    .flags             = AVFMT_VARIABLE_FPS,
 };

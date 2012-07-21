@@ -32,6 +32,7 @@
 #include "avformat.h"
 #include "internal.h"
 #include "riff.h"
+#include "libavutil/avassert.h"
 
 /** The min size of an XMV header. */
 #define XMV_MIN_HEADER_SIZE 36
@@ -183,6 +184,11 @@ static int xmv_read_header(AVFormatContext *s)
         packet->bits_per_sample = avio_rl16(pb);
         packet->flags           = avio_rl16(pb);
 
+        if (!packet->channels) {
+            av_log(s, AV_LOG_ERROR, "0 channels\n");
+            return AVERROR(EINVAL);
+        }
+
         packet->bit_rate      = packet->bits_per_sample *
                                 packet->sample_rate *
                                 packet->channels;
@@ -289,7 +295,7 @@ static int xmv_process_packet_header(AVFormatContext *s)
      * short for every audio track. But as playing around with XMV files with
      * ADPCM audio showed, taking the extra 4 bytes from the audio data gives
      * you either completely distorted audio or click (when skipping the
-     * remaining 68 bytes of the ADPCM block). Substracting 4 bytes for every
+     * remaining 68 bytes of the ADPCM block). Subtracting 4 bytes for every
      * audio track from the video data works at least for the audio. Probably
      * some alignment thing?
      * The video data has (always?) lots of padding, so it should work out...
@@ -299,7 +305,7 @@ static int xmv_process_packet_header(AVFormatContext *s)
     xmv->current_stream = 0;
     if (!xmv->video.frame_count) {
         xmv->video.frame_count = 1;
-        xmv->current_stream    = 1;
+        xmv->current_stream    = xmv->stream_count > 1;
     }
 
     /* Packet audio header */
@@ -349,7 +355,7 @@ static int xmv_process_packet_header(AVFormatContext *s)
             if (xmv->video.stream_index >= 0) {
                 AVStream *vst = s->streams[xmv->video.stream_index];
 
-                assert(xmv->video.stream_index < s->nb_streams);
+                av_assert0(xmv->video.stream_index < s->nb_streams);
 
                 if (vst->codec->extradata_size < 4) {
                     av_free(vst->codec->extradata);
@@ -541,7 +547,7 @@ static int xmv_read_close(AVFormatContext *s)
 {
     XMVDemuxContext *xmv = s->priv_data;
 
-    av_free(xmv->audio);
+    av_freep(&xmv->audio);
 
     return 0;
 }

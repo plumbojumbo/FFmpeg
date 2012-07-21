@@ -22,12 +22,13 @@
 #ifndef AVCODEC_AACENC_H
 #define AVCODEC_AACENC_H
 
+#include "libavutil/float_dsp.h"
 #include "avcodec.h"
 #include "put_bits.h"
 #include "dsputil.h"
 
 #include "aac.h"
-
+#include "audio_frame_queue.h"
 #include "psymodel.h"
 
 #define AAC_CODER_NB 4
@@ -61,6 +62,7 @@ typedef struct AACEncContext {
     FFTContext mdct1024;                         ///< long (1024 samples) frame transform context
     FFTContext mdct128;                          ///< short (128 samples) frame transform context
     DSPContext  dsp;
+    AVFloatDSPContext fdsp;
     float *planar_samples[6];                    ///< saved preprocessed input
 
     int samplerate_index;                        ///< MPEG-4 samplerate index
@@ -74,6 +76,7 @@ typedef struct AACEncContext {
     int cur_channel;
     int last_frame;
     float lambda;
+    AudioFrameQueue afq;
     DECLARE_ALIGNED(16, int,   qcoefs)[96];      ///< quantized coefficients
     DECLARE_ALIGNED(32, float, scoefs)[1024];    ///< scaled coefficients
 

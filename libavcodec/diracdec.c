@@ -21,7 +21,7 @@
  */
 
 /**
- * @file libavcodec/diracdec.c
+ * @file
  * Dirac Decoder
  * @author Marco Gerards <marco@gnu.org>, David Conrad, Jordi Ortiz <nenjordi@gmail.com>
  */
@@ -399,7 +399,7 @@ static av_cold int dirac_decode_init(AVCodecContext *avctx)
         return AVERROR_PATCHWELCOME;
     }
 
-    dsputil_init(&s->dsp, avctx);
+    ff_dsputil_init(&s->dsp, avctx);
     ff_diracdsp_init(&s->diracdsp);
 
     return 0;
@@ -625,7 +625,7 @@ static void decode_component(DiracContext *s, int comp)
                 b->quant = svq3_get_ue_golomb(&s->gb);
                 align_get_bits(&s->gb);
                 b->coeff_data = s->gb.buffer + get_bits_count(&s->gb)/8;
-                b->length = FFMIN(b->length, get_bits_left(&s->gb)/8);
+                b->length = FFMIN(b->length, FFMAX(get_bits_left(&s->gb)/8, 0));
                 skip_bits_long(&s->gb, b->length*8);
             }
         }
@@ -856,12 +856,12 @@ static int dirac_unpack_prediction_parameters(DiracContext *s)
     /*[DIRAC_STD] 11.2.4 motion_data_dimensions()
       Calculated in function dirac_unpack_block_motion_data */
 
-    if (s->plane[0].xbsep < s->plane[0].xblen/2 || s->plane[0].ybsep < s->plane[0].yblen/2) {
+    if (!s->plane[0].xbsep || !s->plane[0].ybsep || s->plane[0].xbsep < s->plane[0].xblen/2 || s->plane[0].ybsep < s->plane[0].yblen/2) {
         av_log(s->avctx, AV_LOG_ERROR, "Block separation too small\n");
         return -1;
     }
     if (s->plane[0].xbsep > s->plane[0].xblen || s->plane[0].ybsep > s->plane[0].yblen) {
-        av_log(s->avctx, AV_LOG_ERROR, "Block seperation greater than size\n");
+        av_log(s->avctx, AV_LOG_ERROR, "Block separation greater than size\n");
         return -1;
     }
     if (FFMAX(s->plane[0].xblen, s->plane[0].yblen) > MAX_BLOCKSIZE) {
@@ -961,7 +961,7 @@ static int dirac_unpack_idwt_params(DiracContext *s)
     CHECKEDREAD(s->wavelet_depth, tmp > MAX_DWT_LEVELS || tmp < 1, "invalid number of DWT decompositions\n")
 
     if (!s->low_delay) {
-        /* Codeblock paramaters (core syntax only) */
+        /* Codeblock parameters (core syntax only) */
         if (get_bits1(gb)) {
             for (i = 0; i <= s->wavelet_depth; i++) {
                 CHECKEDREAD(s->codeblock[i].width , tmp < 1, "codeblock width invalid\n")
@@ -979,6 +979,11 @@ static int dirac_unpack_idwt_params(DiracContext *s)
         s->lowdelay.num_y     = svq3_get_ue_golomb(gb);
         s->lowdelay.bytes.num = svq3_get_ue_golomb(gb);
         s->lowdelay.bytes.den = svq3_get_ue_golomb(gb);
+
+        if (s->lowdelay.bytes.den <= 0) {
+            av_log(s->avctx,AV_LOG_ERROR,"Invalid lowdelay.bytes.den\n");
+            return AVERROR_INVALIDDATA;
+        }
 
         /* [DIRAC_STD] 11.3.5 Quantisation matrices (low-delay syntax). quant_matrix() */
         if (get_bits1(gb)) {
@@ -1870,7 +1875,7 @@ static int dirac_decode_frame(AVCodecContext *avctx, void *data, int *data_size,
     }
 
     if (!s->current_picture)
-        return 0;
+        return buf_size;
 
     if (s->current_picture->avframe.display_picture_number > s->frame_number) {
         DiracFrame *delayed_frame = remove_frame(s->delay_frames, s->frame_number);

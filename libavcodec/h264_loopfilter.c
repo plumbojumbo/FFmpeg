@@ -34,9 +34,6 @@
 #include "mathops.h"
 #include "rectangle.h"
 
-//#undef NDEBUG
-#include <assert.h>
-
 /* Deblocking filter (p153) */
 static const uint8_t alpha_table[52*3] = {
      0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
@@ -245,7 +242,7 @@ static av_always_inline void h264_filter_mb_fast_internal(H264Context *h,
                                                           int pixel_shift)
 {
     MpegEncContext * const s = &h->s;
-    int chroma = !(CONFIG_GRAY && (s->flags&CODEC_FLAG_GRAY));
+    int chroma = CHROMA && !(CONFIG_GRAY && (s->flags&CODEC_FLAG_GRAY));
     int chroma444 = CHROMA444;
     int chroma422 = CHROMA422;
 
@@ -418,7 +415,7 @@ static av_always_inline void h264_filter_mb_fast_internal(H264Context *h,
 }
 
 void ff_h264_filter_mb_fast( H264Context *h, int mb_x, int mb_y, uint8_t *img_y, uint8_t *img_cb, uint8_t *img_cr, unsigned int linesize, unsigned int uvlinesize) {
-    assert(!FRAME_MBAFF);
+    av_assert2(!FRAME_MBAFF);
     if(!h->h264dsp.h264_loop_filter_strength || h->pps.chroma_qp_diff) {
         ff_h264_filter_mb(h, mb_x, mb_y, img_y, img_cb, img_cr, linesize, uvlinesize);
         return;
@@ -713,7 +710,7 @@ void ff_h264_filter_mb( H264Context *h, int mb_x, int mb_y, uint8_t *img_y, uint
     const int mvy_limit = IS_INTERLACED(mb_type) ? 2 : 4;
     int first_vertical_edge_done = 0;
     av_unused int dir;
-    int chroma = !(CONFIG_GRAY && (s->flags&CODEC_FLAG_GRAY));
+    int chroma = CHROMA && !(CONFIG_GRAY && (s->flags&CODEC_FLAG_GRAY));
     int qp_bd_offset = 6 * (h->sps.bit_depth_luma - 8);
     int a = h->slice_alpha_c0_offset - qp_bd_offset;
     int b = h->slice_beta_offset - qp_bd_offset;

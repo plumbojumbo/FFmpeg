@@ -133,9 +133,8 @@ void ff_celp_lp_synthesis_filterf(float *out, const float *filter_coeffs,
         out2 -= val * old_out2;
         out3 -= val * old_out3;
 
-        old_out3 = out[-5];
-
         for (i = 5; i <= filter_length; i += 2) {
+            old_out3 = out[-i];
             val = filter_coeffs[i-1];
 
             out0 -= val * old_out3;
@@ -154,7 +153,6 @@ void ff_celp_lp_synthesis_filterf(float *out, const float *filter_coeffs,
 
             FFSWAP(float, old_out0, old_out2);
             old_out1 = old_out3;
-            old_out3 = out[-i-2];
         }
 
         tmp0 = out0;
@@ -206,4 +204,13 @@ void ff_celp_lp_zero_synthesis_filterf(float *out, const float *filter_coeffs,
         for (i = 1; i <= filter_length; i++)
             out[n] += filter_coeffs[i-1] * in[n-i];
     }
+}
+
+void ff_celp_filter_init(CELPFContext *c)
+{
+    c->celp_lp_synthesis_filterf        = ff_celp_lp_synthesis_filterf;
+    c->celp_lp_zero_synthesis_filterf   = ff_celp_lp_zero_synthesis_filterf;
+
+    if(HAVE_MIPSFPU)
+        ff_celp_filter_init_mips(c);
 }

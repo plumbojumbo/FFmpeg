@@ -29,6 +29,9 @@
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "avfilter.h"
+#include "formats.h"
+#include "internal.h"
+#include "video.h"
 
 /**
  * Apply a simple delogo algorithm to the image in dst and put the
@@ -148,16 +151,7 @@ static const AVOption delogo_options[]= {
     {NULL},
 };
 
-static const char *delogo_get_name(void *ctx)
-{
-    return "delogo";
-}
-
-static const AVClass delogo_class = {
-    .class_name = "DelogoContext",
-    .item_name  = delogo_get_name,
-    .option     = delogo_options,
-};
+AVFILTER_DEFINE_CLASS(delogo);
 
 static int query_formats(AVFilterContext *ctx)
 {
@@ -168,11 +162,11 @@ static int query_formats(AVFilterContext *ctx)
         PIX_FMT_NONE
     };
 
-    avfilter_set_common_pixel_formats(ctx, avfilter_make_format_list(pix_fmts));
+    ff_set_common_formats(ctx, ff_make_format_list(pix_fmts));
     return 0;
 }
 
-static av_cold int init(AVFilterContext *ctx, const char *args, void *opaque)
+static av_cold int init(AVFilterContext *ctx, const char *args)
 {
     DelogoContext *delogo = ctx->priv;
     int ret = 0;
@@ -204,7 +198,7 @@ static av_cold int init(AVFilterContext *ctx, const char *args, void *opaque)
     if (delogo->show)
         delogo->band = 4;
 
-    av_log(ctx, AV_LOG_INFO, "x:%d y:%d, w:%d h:%d band:%d show:%d\n",
+    av_log(ctx, AV_LOG_VERBOSE, "x:%d y:%d, w:%d h:%d band:%d show:%d\n",
            delogo->x, delogo->y, delogo->w, delogo->h, delogo->band, delogo->show);
 
     delogo->w += delogo->band*2;
@@ -221,8 +215,8 @@ static void start_frame(AVFilterLink *inlink, AVFilterBufferRef *inpicref)
     AVFilterBufferRef *outpicref;
 
     if (inpicref->perms & AV_PERM_PRESERVE) {
-        outpicref = avfilter_get_video_buffer(outlink, AV_PERM_WRITE,
-                                              outlink->w, outlink->h);
+        outpicref = ff_get_video_buffer(outlink, AV_PERM_WRITE,
+                                        outlink->w, outlink->h);
         avfilter_copy_buffer_ref_props(outpicref, inpicref);
         outpicref->video->w = outlink->w;
         outpicref->video->h = outlink->h;
@@ -230,7 +224,7 @@ static void start_frame(AVFilterLink *inlink, AVFilterBufferRef *inpicref)
         outpicref = inpicref;
 
     outlink->out_buf = outpicref;
-    avfilter_start_frame(outlink, avfilter_ref_buffer(outpicref, ~0));
+    ff_start_frame(outlink, avfilter_ref_buffer(outpicref, ~0));
 }
 
 static void null_draw_slice(AVFilterLink *link, int y, int h, int slice_dir) { }
@@ -259,8 +253,8 @@ static void end_frame(AVFilterLink *inlink)
                      delogo->show, direct);
     }
 
-    avfilter_draw_slice(outlink, 0, inlink->h, 1);
-    avfilter_end_frame(outlink);
+    ff_draw_slice(outlink, 0, inlink->h, 1);
+    ff_end_frame(outlink);
     avfilter_unref_buffer(inpicref);
     if (!direct)
         avfilter_unref_buffer(outpicref);
@@ -275,7 +269,7 @@ AVFilter avfilter_vf_delogo = {
 
     .inputs    = (const AVFilterPad[]) {{ .name       = "default",
                                     .type             = AVMEDIA_TYPE_VIDEO,
-                                    .get_video_buffer = avfilter_null_get_video_buffer,
+                                    .get_video_buffer = ff_null_get_video_buffer,
                                     .start_frame      = start_frame,
                                     .draw_slice       = null_draw_slice,
                                     .end_frame        = end_frame,

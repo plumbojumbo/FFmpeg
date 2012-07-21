@@ -38,17 +38,17 @@
 /* dct code */
 typedef short DCTELEM;
 
-void fdct_ifast (DCTELEM *data);
-void fdct_ifast248 (DCTELEM *data);
+void ff_fdct_ifast (DCTELEM *data);
+void ff_fdct_ifast248 (DCTELEM *data);
 void ff_jpeg_fdct_islow_8(DCTELEM *data);
 void ff_jpeg_fdct_islow_10(DCTELEM *data);
 void ff_fdct248_islow_8(DCTELEM *data);
 void ff_fdct248_islow_10(DCTELEM *data);
 
-void j_rev_dct (DCTELEM *data);
-void j_rev_dct4 (DCTELEM *data);
-void j_rev_dct2 (DCTELEM *data);
-void j_rev_dct1 (DCTELEM *data);
+void ff_j_rev_dct (DCTELEM *data);
+void ff_j_rev_dct4 (DCTELEM *data);
+void ff_j_rev_dct2 (DCTELEM *data);
+void ff_j_rev_dct1 (DCTELEM *data);
 void ff_wmv2_idct_c(DCTELEM *data);
 
 void ff_fdct_mmx(DCTELEM *block);
@@ -72,6 +72,8 @@ void ff_h264_chroma_dc_dequant_idct_ ## depth ## _c(DCTELEM *block, int qmul);
 H264_IDCT( 8)
 H264_IDCT( 9)
 H264_IDCT(10)
+H264_IDCT(12)
+H264_IDCT(14)
 
 void ff_svq3_luma_dc_dequant_idct_c(DCTELEM *output, DCTELEM *input, int qp);
 void ff_svq3_add_idct_c(uint8_t *dst, DCTELEM *block, int stride, int qp, int dc);
@@ -98,20 +100,13 @@ void ff_avg_pixels16x16_ ## depth ## _c(uint8_t *dst, uint8_t *src, int stride);
 PUTAVG_PIXELS( 8)
 PUTAVG_PIXELS( 9)
 PUTAVG_PIXELS(10)
+PUTAVG_PIXELS(12)
+PUTAVG_PIXELS(14)
 
 #define ff_put_pixels8x8_c ff_put_pixels8x8_8_c
 #define ff_avg_pixels8x8_c ff_avg_pixels8x8_8_c
 #define ff_put_pixels16x16_c ff_put_pixels16x16_8_c
 #define ff_avg_pixels16x16_c ff_avg_pixels16x16_8_c
-
-/* VP3 DSP functions */
-void ff_vp3_idct_c(DCTELEM *block/* align 16*/);
-void ff_vp3_idct_put_c(uint8_t *dest/*align 8*/, int line_size, DCTELEM *block/*align 16*/);
-void ff_vp3_idct_add_c(uint8_t *dest/*align 8*/, int line_size, DCTELEM *block/*align 16*/);
-void ff_vp3_idct_dc_add_c(uint8_t *dest/*align 8*/, int line_size, const DCTELEM *block/*align 16*/);
-
-void ff_vp3_v_loop_filter_c(uint8_t *src, int stride, int *bounding_values);
-void ff_vp3_h_loop_filter_c(uint8_t *src, int stride, int *bounding_values);
 
 /* EA functions */
 void ff_ea_idct_put_c(uint8_t *dest, int linesize, DCTELEM *block);
@@ -197,10 +192,6 @@ typedef struct ScanTable{
     const uint8_t *scantable;
     uint8_t permutated[64];
     uint8_t raster_end[64];
-#if ARCH_PPC
-                /** Used by dct_quantize_altivec to find last-non-zero */
-    DECLARE_ALIGNED(16, uint8_t, inverse)[64];
-#endif
 } ScanTable;
 
 void ff_init_scantable(uint8_t *, ScanTable *st, const uint8_t *src_scantable);
@@ -215,6 +206,8 @@ void ff_emulated_edge_mc_ ## depth (uint8_t *buf, const uint8_t *src, int linesi
 EMULATED_EDGE(8)
 EMULATED_EDGE(9)
 EMULATED_EDGE(10)
+EMULATED_EDGE(12)
+EMULATED_EDGE(14)
 
 void ff_add_pixels_clamped_c(const DCTELEM *block, uint8_t *dest, int linesize);
 void ff_put_pixels_clamped_c(const DCTELEM *block, uint8_t *dest, int linesize);
@@ -378,7 +371,7 @@ typedef struct DSPContext {
 
     /* huffyuv specific */
     void (*add_bytes)(uint8_t *dst/*align 16*/, uint8_t *src/*align 16*/, int w);
-    void (*diff_bytes)(uint8_t *dst/*align 16*/, uint8_t *src1/*align 16*/, uint8_t *src2/*align 1*/,int w);
+    void (*diff_bytes)(uint8_t *dst/*align 16*/, const uint8_t *src1/*align 16*/, const uint8_t *src2/*align 1*/,int w);
     /**
      * subtract huffyuv's variant of median prediction
      * note, this might read from src1[-1], src2[-1]
@@ -399,15 +392,10 @@ typedef struct DSPContext {
     void (*x8_v_loop_filter)(uint8_t *src, int stride, int qscale);
     void (*x8_h_loop_filter)(uint8_t *src, int stride, int qscale);
 
-    void (*vp3_idct_dc_add)(uint8_t *dest/*align 8*/, int line_size, const DCTELEM *block/*align 16*/);
-    void (*vp3_v_loop_filter)(uint8_t *src, int stride, int *bounding_values);
-    void (*vp3_h_loop_filter)(uint8_t *src, int stride, int *bounding_values);
-
     /* assume len is a multiple of 4, and arrays are 16-byte aligned */
     void (*vorbis_inverse_coupling)(float *mag, float *ang, int blocksize);
     void (*ac3_downmix)(float (*samples)[256], float (*matrix)[2], int out_ch, int in_ch, int len);
-    /* assume len is a multiple of 8, and arrays are 16-byte aligned */
-    void (*vector_fmul)(float *dst, const float *src0, const float *src1, int len);
+    /* assume len is a multiple of 16, and arrays are 32-byte aligned */
     void (*vector_fmul_reverse)(float *dst, const float *src0, const float *src1, int len);
     /* assume len is a multiple of 8, and src arrays are 16-byte aligned */
     void (*vector_fmul_add)(float *dst, const float *src0, const float *src1, const float *src2, int len);
@@ -426,17 +414,6 @@ typedef struct DSPContext {
     void (*vector_fmul_scalar)(float *dst, const float *src, float mul,
                                int len);
     /**
-     * Multiply a vector of floats by a scalar float and add to
-     * destination vector.  Source and destination vectors must
-     * overlap exactly or not at all.
-     * @param dst result vector, 16-byte aligned
-     * @param src input vector, 16-byte aligned
-     * @param mul scalar value
-     * @param len length of vector, multiple of 4
-     */
-    void (*vector_fmac_scalar)(float *dst, const float *src, float mul,
-                               int len);
-    /**
      * Calculate the scalar product of two vectors of floats.
      * @param v1  first vector, 16-byte aligned
      * @param v2  second vector, 16-byte aligned
@@ -449,7 +426,7 @@ typedef struct DSPContext {
      * @param v2  second input vector, difference output, 16-byte aligned
      * @param len length of vectors, multiple of 4
      */
-    void (*butterflies_float)(float *restrict v1, float *restrict v2, int len);
+    void (*butterflies_float)(float *av_restrict v1, float *av_restrict v2, int len);
 
     /**
      * Calculate the sum and difference of two vectors of floats and interleave
@@ -537,9 +514,8 @@ typedef struct DSPContext {
     /**
      * Calculate scalar product of two vectors.
      * @param len length of vectors, should be multiple of 16
-     * @param shift number of bits to discard from product
      */
-    int32_t (*scalarproduct_int16)(const int16_t *v1, const int16_t *v2/*align 16*/, int len, int shift);
+    int32_t (*scalarproduct_int16)(const int16_t *v1, const int16_t *v2/*align 16*/, int len);
     /* ape functions */
     /**
      * Calculate scalar product of v1 and v2,
@@ -569,9 +545,9 @@ typedef struct DSPContext {
      * @param src  source array
      *             constraints: 16-byte aligned
      * @param min  minimum value
-     *             constraints: must in the the range [-(1<<24), 1<<24]
+     *             constraints: must be in the range [-(1 << 24), 1 << 24]
      * @param max  maximum value
-     *             constraints: must in the the range [-(1<<24), 1<<24]
+     *             constraints: must be in the range [-(1 << 24), 1 << 24]
      * @param len  number of elements in the array
      *             constraints: multiple of 32 greater than zero
      */
@@ -581,8 +557,9 @@ typedef struct DSPContext {
     op_fill_func fill_block_tab[2];
 } DSPContext;
 
-void dsputil_static_init(void);
-void dsputil_init(DSPContext* p, AVCodecContext *avctx);
+void ff_dsputil_static_init(void);
+void ff_dsputil_init(DSPContext* p, AVCodecContext *avctx);
+attribute_deprecated void dsputil_init(DSPContext* c, AVCodecContext *avctx);
 
 int ff_check_alignment(void);
 
@@ -641,40 +618,23 @@ static inline int get_penalty_factor(int lambda, int lambda2, int type){
     }
 }
 
-void dsputil_init_alpha(DSPContext* c, AVCodecContext *avctx);
-void dsputil_init_arm(DSPContext* c, AVCodecContext *avctx);
-void dsputil_init_bfin(DSPContext* c, AVCodecContext *avctx);
-void dsputil_init_mlib(DSPContext* c, AVCodecContext *avctx);
-void dsputil_init_mmi(DSPContext* c, AVCodecContext *avctx);
-void dsputil_init_mmx(DSPContext* c, AVCodecContext *avctx);
-void dsputil_init_ppc(DSPContext* c, AVCodecContext *avctx);
-void dsputil_init_sh4(DSPContext* c, AVCodecContext *avctx);
-void dsputil_init_vis(DSPContext* c, AVCodecContext *avctx);
+void ff_dsputil_init_alpha(DSPContext* c, AVCodecContext *avctx);
+void ff_dsputil_init_arm(DSPContext* c, AVCodecContext *avctx);
+void ff_dsputil_init_bfin(DSPContext* c, AVCodecContext *avctx);
+void ff_dsputil_init_mmi(DSPContext* c, AVCodecContext *avctx);
+void ff_dsputil_init_mmx(DSPContext* c, AVCodecContext *avctx);
+void ff_dsputil_init_ppc(DSPContext* c, AVCodecContext *avctx);
+void ff_dsputil_init_sh4(DSPContext* c, AVCodecContext *avctx);
+void ff_dsputil_init_vis(DSPContext* c, AVCodecContext *avctx);
 
 void ff_dsputil_init_dwt(DSPContext *c);
 void ff_intrax8dsp_init(DSPContext* c, AVCodecContext *avctx);
 void ff_mlp_init(DSPContext* c, AVCodecContext *avctx);
 void ff_mlp_init_x86(DSPContext* c, AVCodecContext *avctx);
 
-
-#if ARCH_ARM
-
-
-#if HAVE_NEON
+#if (ARCH_ARM && HAVE_NEON) || ARCH_PPC || HAVE_MMI || HAVE_MMX
 #   define STRIDE_ALIGN 16
-#endif
-
-#elif ARCH_PPC
-
-#define STRIDE_ALIGN 16
-
-#elif HAVE_MMI
-
-#define STRIDE_ALIGN 16
-
-#endif
-
-#ifndef STRIDE_ALIGN
+#else
 #   define STRIDE_ALIGN 8
 #endif
 

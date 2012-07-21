@@ -343,7 +343,7 @@ void av_des_mac(AVDES *d, uint8_t *dst, const uint8_t *src, int count) {
 #undef srand
 #include <stdlib.h>
 #include <stdio.h>
-#include <sys/time.h>
+#include "libavutil/time.h"
 static uint64_t rand64(void) {
     uint64_t r = rand();
     r = (r << 32) | rand();
@@ -390,13 +390,11 @@ int main(void) {
 #ifdef GENTABLES
     int j;
 #endif
-    struct timeval tv;
     uint64_t key[3];
     uint64_t data;
     uint64_t ct;
     uint64_t roundkeys[16];
-    gettimeofday(&tv, NULL);
-    srand(tv.tv_sec * 1000 * 1000 + tv.tv_usec);
+    srand(av_gettime());
     key[0] = AV_RB64(test_key);
     data = AV_RB64(plain);
     gen_roundkeys(roundkeys, key[0]);
@@ -417,10 +415,10 @@ int main(void) {
     for (i = 0; i < 1000; i++) {
         key[0] = rand64(); key[1] = rand64(); key[2] = rand64();
         data = rand64();
-        av_des_init(&d, key, 192, 0);
-        av_des_crypt(&d, &ct, &data, 1, NULL, 0);
-        av_des_init(&d, key, 192, 1);
-        av_des_crypt(&d, &ct, &ct, 1, NULL, 1);
+        av_des_init(&d, (uint8_t*)key, 192, 0);
+        av_des_crypt(&d, (uint8_t*)&ct, (uint8_t*)&data, 1, NULL, 0);
+        av_des_init(&d, (uint8_t*)key, 192, 1);
+        av_des_crypt(&d, (uint8_t*)&ct, (uint8_t*)&ct, 1, NULL, 1);
         if (ct != data) {
             printf("Test 2 failed\n");
             return 1;

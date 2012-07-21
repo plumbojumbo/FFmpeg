@@ -26,26 +26,28 @@
 #include "libavutil/mathematics.h"
 #include "libavutil/parseutils.h"
 #include "avfilter.h"
+#include "internal.h"
+#include "video.h"
 
 typedef struct {
     AVRational ratio;
 } AspectContext;
 
-static av_cold int init(AVFilterContext *ctx, const char *args, void *opaque)
+static av_cold int init(AVFilterContext *ctx, const char *args)
 {
     AspectContext *aspect = ctx->priv;
-    int ret;
+    aspect->ratio = (AVRational) {0, 1};
 
     if (args) {
-        if ((ret = av_parse_ratio(&aspect->ratio, args, 100, 0, ctx)) < 0 ||
+        if (av_parse_ratio(&aspect->ratio, args, 100, 0, ctx) < 0 ||
             aspect->ratio.num < 0 || aspect->ratio.den <= 0) {
             av_log(ctx, AV_LOG_ERROR,
                    "Invalid string '%s' for aspect ratio.\n", args);
-            return ret;
+            return AVERROR(EINVAL);
         }
-
-        av_log(ctx, AV_LOG_INFO, "a:%d/%d\n", aspect->ratio.num, aspect->ratio.den);
     }
+
+    av_log(ctx, AV_LOG_VERBOSE, "a:%d/%d\n", aspect->ratio.num, aspect->ratio.den);
     return 0;
 }
 
@@ -54,11 +56,10 @@ static void start_frame(AVFilterLink *link, AVFilterBufferRef *picref)
     AspectContext *aspect = link->dst->priv;
 
     picref->video->sample_aspect_ratio = aspect->ratio;
-    avfilter_start_frame(link->dst->outputs[0], picref);
+    ff_start_frame(link->dst->outputs[0], picref);
 }
 
 #if CONFIG_SETDAR_FILTER
-/* for setdar filter, convert from frame aspect ratio to pixel aspect ratio */
 static int setdar_config_props(AVFilterLink *inlink)
 {
     AspectContext *aspect = inlink->dst->priv;
@@ -68,7 +69,7 @@ static int setdar_config_props(AVFilterLink *inlink)
                aspect->ratio.num * inlink->h,
                aspect->ratio.den * inlink->w, 100);
 
-    av_log(inlink->dst, AV_LOG_INFO, "w:%d h:%d -> dar:%d/%d sar:%d/%d\n",
+    av_log(inlink->dst, AV_LOG_VERBOSE, "w:%d h:%d -> dar:%d/%d sar:%d/%d\n",
            inlink->w, inlink->h, dar.num, dar.den, aspect->ratio.num, aspect->ratio.den);
 
     inlink->sample_aspect_ratio = aspect->ratio;
@@ -87,9 +88,9 @@ AVFilter avfilter_vf_setdar = {
     .inputs    = (const AVFilterPad[]) {{ .name       = "default",
                                     .type             = AVMEDIA_TYPE_VIDEO,
                                     .config_props     = setdar_config_props,
-                                    .get_video_buffer = avfilter_null_get_video_buffer,
+                                    .get_video_buffer = ff_null_get_video_buffer,
                                     .start_frame      = start_frame,
-                                    .end_frame        = avfilter_null_end_frame },
+                                    .end_frame        = ff_null_end_frame },
                                   { .name = NULL}},
 
     .outputs   = (const AVFilterPad[]) {{ .name       = "default",
@@ -99,7 +100,6 @@ AVFilter avfilter_vf_setdar = {
 #endif /* CONFIG_SETDAR_FILTER */
 
 #if CONFIG_SETSAR_FILTER
-/* for setdar filter, convert from frame aspect ratio to pixel aspect ratio */
 static int setsar_config_props(AVFilterLink *inlink)
 {
     AspectContext *aspect = inlink->dst->priv;
@@ -120,9 +120,9 @@ AVFilter avfilter_vf_setsar = {
     .inputs    = (const AVFilterPad[]) {{ .name       = "default",
                                     .type             = AVMEDIA_TYPE_VIDEO,
                                     .config_props     = setsar_config_props,
-                                    .get_video_buffer = avfilter_null_get_video_buffer,
+                                    .get_video_buffer = ff_null_get_video_buffer,
                                     .start_frame      = start_frame,
-                                    .end_frame        = avfilter_null_end_frame },
+                                    .end_frame        = ff_null_end_frame },
                                   { .name = NULL}},
 
     .outputs   = (const AVFilterPad[]) {{ .name       = "default",

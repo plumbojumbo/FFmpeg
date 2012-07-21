@@ -4,7 +4,7 @@ FFmpeg maintainers
 Below is a list of the people maintaining different parts of the
 FFmpeg code.
 
-Please try to keep entries where you are the maintainer upto date!
+Please try to keep entries where you are the maintainer up to date!
 
 Names in () mean that the maintainer currently has no time to maintain the code.
 A CC after the name means that the maintainer prefers to be CC-ed on patches
@@ -159,6 +159,7 @@ Codecs:
   indeo5*                               Kostya Shishkov
   interplayvideo.c                      Mike Melanson
   ivi*                                  Kostya Shishkov
+  jacosub*                              Clément Bœsch
   jpeg_ls.c                             Kostya Shishkov
   jvdec.c                               Peter Ross
   kmvc.c                                Kostya Shishkov
@@ -171,6 +172,7 @@ Codecs:
   libschroedinger*                      David Conrad
   libspeexdec.c                         Justin Ruggles
   libtheoraenc.c                        David Conrad
+  libutvideo*                           Derek Buitenhuis
   libvorbis.c                           David Conrad
   libxavs.c                             Stefan Gehrer
   libx264.c                             Mans Rullgard, Jason Garrett-Glaser
@@ -243,6 +245,7 @@ Codecs:
   xan.c                                 Mike Melanson
   xl.c                                  Kostya Shishkov
   xvmc.c                                Ivan Kalvachev
+  zerocodec.c                           Derek Buitenhuis
   zmbv*                                 Kostya Shishkov
 
 Hardware acceleration:
@@ -260,6 +263,7 @@ libavdevice
     libavdevice/avdevice.h
 
 
+  iec61883.c                            Georg Lippitsch
   libdc1394.c                           Roman Shaposhnik
   v4l2.c                                Luca Abeni
   vfwcap.c                              Ramiro Polla
@@ -268,14 +272,18 @@ libavdevice
 libavfilter
 ===========
 
-Video filters:
+Generic parts:
   graphdump.c                           Nicolas George
+
+Filters:
   af_amerge.c                           Nicolas George
   af_astreamsync.c                      Nicolas George
+  af_atempo.c                           Pavel Koshevoy
   af_pan.c                              Nicolas George
-  vsrc_mandelbrot.c                     Michael Niedermayer
   vf_yadif.c                            Michael Niedermayer
 
+Sources:
+  vsrc_mandelbrot.c                     Michael Niedermayer
 
 libavformat
 ===========
@@ -313,6 +321,7 @@ Muxers/Demuxers:
   ipmovie.c                             Mike Melanson
   img2.c                                Michael Niedermayer
   iss.c                                 Stefan Gehrer
+  jacosub*                              Clément Bœsch
   jvdec.c                               Peter Ross
   libmodplug.c                          Clément Bœsch
   libnut.c                              Oded Shimon
@@ -370,6 +379,7 @@ Muxers/Demuxers:
   wv.c                                  Kostya Shishkov
 
 Protocols:
+  bluray.c                              Petri Hintukainen
   http.c                                Ronald S. Bultje
   mms*.c                                Ronald S. Bultje
   udp.c                                 Luca Abeni
@@ -395,7 +405,8 @@ x86                                     Michael Niedermayer
 Releases
 ========
 
-0.9                                     Michael Niedermayer
+0.11                                    Michael Niedermayer
+0.10                                    Michael Niedermayer
 
 
 
@@ -408,6 +419,7 @@ Attila Kinali                 11F0 F9A6 A1D2 11F6 C745 D10C 6520 BCDD F2DF E765
 Baptiste Coudurier            8D77 134D 20CC 9220 201F C5DB 0AC9 325C 5C1A BAAA
 Ben Littler                   3EE3 3723 E560 3214 A8CD 4DEB 2CDB FCE7 768C 8D2C
 Benoit Fouet                  B22A 4F4F 43EF 636B BB66 FCDC 0023 AE1E 2985 49C8
+Bœsch Clément                 52D0 3A82 D445 F194 DB8B 2B16 87EE 2CB8 F4B8 FCF9
 Daniel Verkamp                78A6 07ED 782C 653E C628 B8B9 F0EB 8DD8 2F0E 21C7
 Diego Biurrun                 8227 1E31 B6D9 4994 7427 E220 9CAE D6CC 4757 FCC5
 Gwenole Beauchesne            2E63 B3A6 3E44 37E2 017D 2704 53C7 6266 B153 99C4

@@ -24,6 +24,7 @@
 #include "pcm.h"
 #include "libavutil/log.h"
 #include "libavutil/opt.h"
+#include "libavutil/avassert.h"
 
 #define RAW_SAMPLES     1024
 
@@ -36,12 +37,13 @@ static int raw_read_packet(AVFormatContext *s, AVPacket *pkt)
 
     ret= av_get_packet(s->pb, pkt, size);
 
+    pkt->flags &= ~AV_PKT_FLAG_CORRUPT;
     pkt->stream_index = 0;
     if (ret < 0)
         return ret;
 
     bps= av_get_bits_per_sample(s->streams[0]->codec->codec_id);
-    assert(bps); // if false there IS a bug elsewhere (NOT in this function)
+    av_assert1(bps); // if false there IS a bug elsewhere (NOT in this function)
     pkt->dts=
     pkt->pts= pkt->pos*8 / (bps * s->streams[0]->codec->channels);
 
@@ -67,7 +69,7 @@ AVInputFormat ff_pcm_ ## name_ ## _demuxer = {              \
     .priv_data_size = sizeof(RawAudioDemuxerContext),       \
     .read_header    = ff_raw_read_header,                   \
     .read_packet    = raw_read_packet,                      \
-    .read_seek      = pcm_read_seek,                        \
+    .read_seek      = ff_pcm_read_seek,                     \
     .flags          = AVFMT_GENERIC_INDEX,                  \
     .extensions     = ext,                                  \
     .raw_codec_id   = codec,                                \

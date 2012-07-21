@@ -33,7 +33,7 @@
 
 static void scale_coefficients(AC3EncodeContext *s);
 
-static void apply_window(DSPContext *dsp, SampleType *output,
+static void apply_window(void *dsp, SampleType *output,
                          const SampleType *input, const SampleType *window,
                          unsigned int len);
 
@@ -110,8 +110,13 @@ static void apply_mdct(AC3EncodeContext *s)
             AC3Block *block = &s->blocks[blk];
             const SampleType *input_samples = &s->planar_samples[ch][blk * AC3_BLOCK_SIZE];
 
+#if CONFIG_AC3ENC_FLOAT
+            apply_window(&s->fdsp, s->windowed_samples, input_samples,
+                         s->mdct_window, AC3_WINDOW_SIZE);
+#else
             apply_window(&s->dsp, s->windowed_samples, input_samples,
                          s->mdct_window, AC3_WINDOW_SIZE);
+#endif
 
             if (s->fixed_point)
                 block->coeff_shift[ch+1] = normalize_samples(s);
@@ -338,7 +343,7 @@ static void compute_rematrixing_strategy(AC3EncodeContext *s)
 {
     int nb_coefs;
     int blk, bnd;
-    AC3Block *block, *av_uninit(block0);
+    AC3Block *block, *block0;
 
     if (s->channel_mode != AC3_CHMODE_STEREO)
         return;
@@ -386,11 +391,11 @@ static void compute_rematrixing_strategy(AC3EncodeContext *s)
 }
 
 
-int AC3_NAME(encode_frame)(AVCodecContext *avctx, unsigned char *frame,
-                           int buf_size, void *data)
+int AC3_NAME(encode_frame)(AVCodecContext *avctx, AVPacket *avpkt,
+                           const AVFrame *frame, int *got_packet_ptr)
 {
     AC3EncodeContext *s = avctx->priv_data;
-    const SampleType *samples = data;
+    const SampleType *samples = (const SampleType *)frame->data[0];
     int ret;
 
     if (s->options.allow_per_frame_metadata) {
@@ -437,7 +442,13 @@ int AC3_NAME(encode_frame)(AVCodecContext *avctx, unsigned char *frame,
 
     ff_ac3_quantize_mantissas(s);
 
-    ff_ac3_output_frame(s, frame);
+    if ((ret = ff_alloc_packet2(avctx, avpkt, s->frame_size)))
+        return ret;
+    ff_ac3_output_frame(s, avpkt->data);
 
-    return s->frame_size;
+    if (frame->pts != AV_NOPTS_VALUE)
+        avpkt->pts = frame->pts - ff_samples_to_time_base(avctx, avctx->delay);
+
+    *got_packet_ptr = 1;
+    return 0;
 }

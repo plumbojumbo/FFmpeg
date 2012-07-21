@@ -51,6 +51,7 @@ extern const int this_year;
 extern AVCodecContext *avcodec_opts[AVMEDIA_TYPE_NB];
 extern AVFormatContext *avformat_opts;
 extern struct SwsContext *sws_opts;
+extern struct SwrContext *swr_opts;
 extern AVDictionary *format_opts, *codec_opts;
 
 /**
@@ -84,6 +85,8 @@ int opt_loglevel(const char *opt, const char *arg);
 int opt_report(const char *opt);
 
 int opt_max_alloc(const char *opt, const char *arg);
+
+int opt_cpuflags(const char *opt, const char *arg);
 
 int opt_codec_debug(const char *opt, const char *arg);
 
@@ -205,6 +208,12 @@ int parse_option(void *optctx, const char *opt, const char *arg,
 void parse_loglevel(int argc, char **argv, const OptionDef *options);
 
 /**
+ * Return index of option opt in argv or 0 if not found.
+ */
+int locate_option(int argc, char **argv, const OptionDef *options,
+                  const char *optname);
+
+/**
  * Check if the given stream matches a stream specifier.
  *
  * @param s  Corresponding format context.
@@ -223,10 +232,12 @@ int check_stream_specifier(AVFormatContext *s, AVStream *st, const char *spec);
  *
  * @param s Corresponding format context.
  * @param st A stream from s for which the options should be filtered.
+ * @param codec The particular codec for which the options should be filtered.
+ *              If null, the default one is looked up according to the codec id.
  * @return a pointer to the created dictionary
  */
-AVDictionary *filter_codec_opts(AVDictionary *opts, AVCodec *codec,
-                                AVFormatContext *s, AVStream *st);
+AVDictionary *filter_codec_opts(AVDictionary *opts, enum CodecID codec_id,
+                                AVFormatContext *s, AVStream *st, AVCodec *codec);
 
 /**
  * Setup AVCodecContext options for avformat_find_stream_info().
@@ -349,7 +360,7 @@ int cmdutils_read_file(const char *filename, char **bufptr, size_t *size);
  * at configuration time or in a "ffpresets" folder along the executable
  * on win32, in that order. If no such file is found and
  * codec_name is defined, then search for a file named
- * codec_name-preset_name.ffpreset in the above-mentioned directories.
+ * codec_name-preset_name.avpreset in the above-mentioned directories.
  *
  * @param filename buffer where the name of the found filename is written
  * @param filename_size size in bytes of the filename buffer
@@ -365,7 +376,7 @@ FILE *get_preset_file(char *filename, size_t filename_size,
  * Do all the necessary cleanup and abort.
  * This function is implemented in the avtools, not cmdutils.
  */
-void exit_program(int ret);
+av_noreturn void exit_program(int ret);
 
 /**
  * Realloc array to hold new_size elements of elem_size.
@@ -377,4 +388,46 @@ void exit_program(int ret);
  */
 void *grow_array(void *array, int elem_size, int *size, int new_size);
 
+typedef struct FrameBuffer {
+    uint8_t *base[4];
+    uint8_t *data[4];
+    int  linesize[4];
+
+    int h, w;
+    enum PixelFormat pix_fmt;
+
+    int refcount;
+    struct FrameBuffer **pool;  ///< head of the buffer pool
+    struct FrameBuffer *next;
+} FrameBuffer;
+
+/**
+ * Get a frame from the pool. This is intended to be used as a callback for
+ * AVCodecContext.get_buffer.
+ *
+ * @param s codec context. s->opaque must be a pointer to the head of the
+ *          buffer pool.
+ * @param frame frame->opaque will be set to point to the FrameBuffer
+ *              containing the frame data.
+ */
+int codec_get_buffer(AVCodecContext *s, AVFrame *frame);
+
+/**
+ * A callback to be used for AVCodecContext.release_buffer along with
+ * codec_get_buffer().
+ */
+void codec_release_buffer(AVCodecContext *s, AVFrame *frame);
+
+/**
+ * A callback to be used for AVFilterBuffer.free.
+ * @param fb buffer to free. fb->priv must be a pointer to the FrameBuffer
+ *           containing the buffer data.
+ */
+void filter_release_buffer(AVFilterBuffer *fb);
+
+/**
+ * Free all the buffers in the pool. This must be called after all the
+ * buffers have been released.
+ */
+void free_buffer_pool(FrameBuffer **pool);
 #endif /* CMDUTILS_H */

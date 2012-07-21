@@ -36,9 +36,9 @@
 #include <stddef.h>
 #include <stdio.h>
 
+#include "libavutil/float_dsp.h"
 #include "avcodec.h"
 #include "get_bits.h"
-#include "dsputil.h"
 #include "bytestream.h"
 #include "fft.h"
 #include "fmtconvert.h"
@@ -125,13 +125,13 @@ typedef struct {
 
     FFTContext          mdct_ctx;
     FmtConvertContext   fmt_conv;
+    AVFloatDSPContext   fdsp;
 } ATRAC3Context;
 
 static DECLARE_ALIGNED(32, float, mdct_window)[MDCT_SIZE];
 static VLC              spectral_coeff_tab[7];
 static float            gain_tab1[16];
 static float            gain_tab2[31];
-static DSPContext       dsp;
 
 
 /**
@@ -164,7 +164,7 @@ static void IMLT(ATRAC3Context *q, float *pInput, float *pOutput, int odd_band)
     q->mdct_ctx.imdct_calc(&q->mdct_ctx,pOutput,pInput);
 
     /* Perform windowing on the output. */
-    dsp.vector_fmul(pOutput, pOutput, mdct_window, MDCT_SIZE);
+    q->fdsp.vector_fmul(pOutput, pOutput, mdct_window, MDCT_SIZE);
 
 }
 
@@ -402,7 +402,7 @@ static int decodeTonalComponents (GetBitContext *gb, tonal_component *pComponent
 
             for (k=0; k<coded_components; k++) {
                 sfIndx = get_bits(gb,6);
-                if(component_count>=64)
+                if (component_count >= 64)
                     return AVERROR_INVALIDDATA;
                 pComponent[component_count].pos = j * 64 + (get_bits(gb,6));
                 max_coded_values = SAMPLES_PER_FRAME - pComponent[component_count].pos;
@@ -814,9 +814,9 @@ static int decodeFrame(ATRAC3Context *q, const uint8_t* databuf,
         p2= p1+256;
         p3= p2+256;
         p4= p3+256;
-        atrac_iqmf (p1, p2, 256, p1, q->pUnits[i].delayBuf1, q->tempBuf);
-        atrac_iqmf (p4, p3, 256, p3, q->pUnits[i].delayBuf2, q->tempBuf);
-        atrac_iqmf (p1, p3, 512, p1, q->pUnits[i].delayBuf3, q->tempBuf);
+        ff_atrac_iqmf (p1, p2, 256, p1, q->pUnits[i].delayBuf1, q->tempBuf);
+        ff_atrac_iqmf (p4, p3, 256, p3, q->pUnits[i].delayBuf2, q->tempBuf);
+        ff_atrac_iqmf (p1, p3, 512, p1, q->pUnits[i].delayBuf3, q->tempBuf);
     }
 
     return 0;
@@ -1016,7 +1016,7 @@ static av_cold int atrac3_decode_init(AVCodecContext *avctx)
         return ret;
     }
 
-    atrac_generate_tables();
+    ff_atrac_generate_tables();
 
     /* Generate gain tables. */
     for (i=0 ; i<16 ; i++)
@@ -1039,7 +1039,7 @@ static av_cold int atrac3_decode_init(AVCodecContext *avctx)
         q->matrix_coeff_index_next[i] = 3;
     }
 
-    dsputil_init(&dsp, avctx);
+    avpriv_float_dsp_init(&q->fdsp, avctx->flags & CODEC_FLAG_BITEXACT);
     ff_fmt_convert_init(&q->fmt_conv, avctx);
 
     q->pUnits = av_mallocz(sizeof(channel_unit)*q->channels);
@@ -1066,13 +1066,13 @@ static av_cold int atrac3_decode_init(AVCodecContext *avctx)
 
 AVCodec ff_atrac3_decoder =
 {
-    .name = "atrac3",
-    .type = AVMEDIA_TYPE_AUDIO,
-    .id = CODEC_ID_ATRAC3,
+    .name           = "atrac3",
+    .type           = AVMEDIA_TYPE_AUDIO,
+    .id             = CODEC_ID_ATRAC3,
     .priv_data_size = sizeof(ATRAC3Context),
-    .init = atrac3_decode_init,
-    .close = atrac3_decode_close,
-    .decode = atrac3_decode_frame,
-    .capabilities = CODEC_CAP_SUBFRAMES | CODEC_CAP_DR1,
-    .long_name = NULL_IF_CONFIG_SMALL("Atrac 3 (Adaptive TRansform Acoustic Coding 3)"),
+    .init           = atrac3_decode_init,
+    .close          = atrac3_decode_close,
+    .decode         = atrac3_decode_frame,
+    .capabilities   = CODEC_CAP_SUBFRAMES | CODEC_CAP_DR1,
+    .long_name      = NULL_IF_CONFIG_SMALL("Atrac 3 (Adaptive TRansform Acoustic Coding 3)"),
 };

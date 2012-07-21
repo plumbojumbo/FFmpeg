@@ -29,8 +29,11 @@
 #include "libavutil/eval.h"
 #include "libavutil/pixdesc.h"
 #include "avfilter.h"
+#include "formats.h"
+#include "internal.h"
+#include "video.h"
 
-static const char * const var_names[] = {
+static const char *const var_names[] = {
     "w",
     "h",
     "cw",
@@ -74,7 +77,7 @@ typedef struct {
 #define V 2
 #define A 3
 
-static av_cold int init(AVFilterContext *ctx, const char *args, void *opaque)
+static av_cold int init(AVFilterContext *ctx, const char *args)
 {
     BoxBlurContext *boxblur = ctx->priv;
     int e;
@@ -129,7 +132,7 @@ static int query_formats(AVFilterContext *ctx)
         PIX_FMT_NONE
     };
 
-    avfilter_set_common_pixel_formats(ctx, avfilter_make_format_list(pix_fmts));
+    ff_set_common_formats(ctx, ff_make_format_list(pix_fmts));
     return 0;
 }
 
@@ -172,7 +175,7 @@ static int config_input(AVFilterLink *inlink)
     EVAL_RADIUS_EXPR(chroma);
     EVAL_RADIUS_EXPR(alpha);
 
-    av_log(ctx, AV_LOG_INFO,
+    av_log(ctx, AV_LOG_VERBOSE,
            "luma_radius:%d luma_power:%d "
            "chroma_radius:%d chroma_power:%d "
            "alpha_radius:%d alpha_power:%d "
@@ -324,7 +327,7 @@ static void end_frame(AVFilterLink *inlink)
               w[plane], h[plane], boxblur->radius[plane], boxblur->power[plane],
               boxblur->temp);
 
-    avfilter_draw_slice(outlink, 0, inlink->h, 1);
+    ff_draw_slice(outlink, 0, inlink->h, 1);
     avfilter_default_end_frame(inlink);
 }
 
