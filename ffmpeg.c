@@ -262,6 +262,7 @@ typedef struct InputStream {
 typedef struct InputFile {
     AVFormatContext *ctx;
     int eof_reached;      /* true if eof reached */
+    int unavailable;      /* true if the file is unavailable (possibly temporarily) */
     int ist_index;        /* index of first stream in input_streams */
     int64_t ts_offset;
     int nb_streams;       /* number of stream that ffmpeg is aware of; may be different
@@ -325,6 +326,7 @@ typedef struct OutputStream {
     double swr_dither_scale;
     AVDictionary *opts;
     int is_past_recording_time;
+    int unavailable;  /* true if the steram is unavailable (possibly temporarily) */
     int stream_copy;
     const char *attachment_filename;
     int copy_initial_nonkeyframes;
@@ -3337,26 +3339,84 @@ static int need_output(void)
     return 0;
 }
 
-static int select_input_file(uint8_t *no_packet)
+static int input_acceptable(InputStream *ist)
 {
-    int64_t ipts_min = INT64_MAX;
-    int i, file_index = -1;
+    av_assert1(!ist->discard);
+    return !input_files[ist->file_index]->unavailable &&
+           !input_files[ist->file_index]->eof_reached;
+}
 
-    for (i = 0; i < nb_input_streams; i++) {
-        InputStream *ist = input_streams[i];
-        int64_t ipts     = ist->pts;
+static int find_graph_input(FilterGraph *graph)
+{
+    int i, nb_req_max = 0, file_index = -1;
 
-        if (ist->discard || no_packet[ist->file_index])
-            continue;
-        if (!input_files[ist->file_index]->eof_reached) {
-            if (ipts < ipts_min) {
-                ipts_min = ipts;
+    for (i = 0; i < graph->nb_inputs; i++) {
+        int nb_req = av_buffersrc_get_nb_failed_requests(graph->inputs[i]->filter);
+        if (nb_req > nb_req_max) {
+            InputStream *ist = graph->inputs[i]->ist;
+            if (input_acceptable(ist)) {
+                nb_req_max = nb_req;
                 file_index = ist->file_index;
             }
         }
     }
 
     return file_index;
+}
+
+/**
+ * Select the input file to read from.
+ *
+ * @return  >=0 index of the input file to use;
+ *          -1  if no file is acceptable;
+ *          -2  to read from filters without reading from a file
+ */
+static int select_input_file(void)
+{
+    int i, ret, nb_active_out = nb_output_streams, ost_index = -1;
+    int64_t opts_min;
+    OutputStream *ost;
+    AVFilterBufferRef *dummy;
+
+    for (i = 0; i < nb_output_streams; i++)
+        nb_active_out -= output_streams[i]->unavailable =
+            output_streams[i]->is_past_recording_time;
+    while (nb_active_out) {
+        opts_min = INT64_MAX;
+        ost_index = -1;
+        for (i = 0; i < nb_output_streams; i++) {
+            OutputStream *ost = output_streams[i];
+            int64_t opts = av_rescale_q(ost->st->cur_dts, ost->st->time_base,
+                                        AV_TIME_BASE_Q);
+            if (!ost->unavailable && opts < opts_min) {
+                opts_min  = opts;
+                ost_index = i;
+            }
+        }
+        if (ost_index < 0)
+            return -1;
+
+        ost = output_streams[ost_index];
+        if (ost->source_index >= 0) {
+            /* ost is directly connected to an input */
+            InputStream *ist = input_streams[ost->source_index];
+            if (input_acceptable(ist))
+                return ist->file_index;
+        } else {
+            /* ost is connected to a complex filtergraph */
+            av_assert1(ost->filter);
+            ret = av_buffersink_get_buffer_ref(ost->filter->filter, &dummy,
+                                               AV_BUFFERSINK_FLAG_PEEK);
+            if (ret >= 0)
+                return -2;
+            ret = find_graph_input(ost->filter->graph);
+            if (ret >= 0)
+                return ret;
+        }
+        ost->unavailable = 1;
+        nb_active_out--;
+    }
+    return -1;
 }
 
 static int check_keyboard_interaction(int64_t cur_time)
@@ -3580,12 +3640,8 @@ static int transcode(void)
     AVFormatContext *is, *os;
     OutputStream *ost;
     InputStream *ist;
-    uint8_t *no_packet;
     int no_packet_count = 0;
     int64_t timer_start;
-
-    if (!(no_packet = av_mallocz(nb_input_files)))
-        exit_program(1);
 
     ret = transcode_init();
     if (ret < 0)
@@ -3619,12 +3675,17 @@ static int transcode(void)
         }
 
         /* select the stream that we must read now */
-        file_index = select_input_file(no_packet);
+        file_index = select_input_file();
         /* if none, if is finished */
+        if (file_index == -2) {
+            poll_filters() ;
+            continue;
+        }
         if (file_index < 0) {
             if (no_packet_count) {
                 no_packet_count = 0;
-                memset(no_packet, 0, nb_input_files);
+                for (i = 0; i < nb_input_files; i++)
+                    input_files[i]->unavailable = 0;
                 av_usleep(10000);
                 continue;
             }
@@ -3636,7 +3697,7 @@ static int transcode(void)
         ret = get_input_packet(input_files[file_index], &pkt);
 
         if (ret == AVERROR(EAGAIN)) {
-            no_packet[file_index] = 1;
+            input_files[file_index]->unavailable = 1;
             no_packet_count++;
             continue;
         }
@@ -3652,6 +3713,7 @@ static int transcode(void)
                 ist = input_streams[input_files[file_index]->ist_index + i];
                 if (ist->decoding_needed)
                     output_packet(ist, NULL);
+                poll_filters();
             }
 
             if (opt_shortest)
@@ -3661,7 +3723,8 @@ static int transcode(void)
         }
 
         no_packet_count = 0;
-        memset(no_packet, 0, nb_input_files);
+        for (i = 0; i < nb_input_files; i++)
+            input_files[i]->unavailable = 0;
 
         if (do_pkt_dump) {
             av_pkt_dump_log2(NULL, AV_LOG_DEBUG, &pkt, do_hex_dump,
@@ -3798,7 +3861,6 @@ static int transcode(void)
     ret = 0;
 
  fail:
-    av_freep(&no_packet);
 #if HAVE_PTHREADS
     free_input_threads();
 #endif

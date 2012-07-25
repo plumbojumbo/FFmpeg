@@ -65,17 +65,18 @@ static av_cold void uninit(AVFilterContext *ctx)
 
     for (buf = fifo->root.next; buf; buf = tmp) {
         tmp = buf->next;
-        avfilter_unref_buffer(buf->buf);
+        avfilter_unref_bufferp(&buf->buf);
         av_free(buf);
     }
 
-    avfilter_unref_buffer(fifo->buf_out);
+    avfilter_unref_bufferp(&fifo->buf_out);
 }
 
 static int add_to_queue(AVFilterLink *inlink, AVFilterBufferRef *buf)
 {
     FifoContext *fifo = inlink->dst->priv;
 
+    inlink->cur_buf = NULL;
     fifo->last->next = av_mallocz(sizeof(Buf));
     if (!fifo->last->next) {
         avfilter_unref_buffer(buf);
@@ -88,11 +89,6 @@ static int add_to_queue(AVFilterLink *inlink, AVFilterBufferRef *buf)
     return 0;
 }
 
-static void start_frame(AVFilterLink *inlink, AVFilterBufferRef *buf)
-{
-    add_to_queue(inlink, buf);
-}
-
 static void queue_pop(FifoContext *s)
 {
     Buf *tmp = s->root.next->next;
@@ -102,9 +98,15 @@ static void queue_pop(FifoContext *s)
     s->root.next = tmp;
 }
 
-static void end_frame(AVFilterLink *inlink) { }
+static int end_frame(AVFilterLink *inlink)
+{
+    return 0;
+}
 
-static void draw_slice(AVFilterLink *inlink, int y, int h, int slice_dir) { }
+static int draw_slice(AVFilterLink *inlink, int y, int h, int slice_dir)
+{
+    return 0;
+}
 
 /**
  * Move data pointers and pts offset samples forward.
@@ -167,6 +169,9 @@ static int return_audio_frame(AVFilterContext *ctx)
             queue_pop(s);
         } else {
             buf_out = avfilter_ref_buffer(head, AV_PERM_READ);
+            if (!buf_out)
+                return AVERROR(ENOMEM);
+
             buf_out->audio->nb_samples = link->request_samples;
             buffer_offset(link, head, link->request_samples);
         }
@@ -239,9 +244,11 @@ static int request_frame(AVFilterLink *outlink)
      * so we don't have to worry about dereferencing it ourselves. */
     switch (outlink->type) {
     case AVMEDIA_TYPE_VIDEO:
-        ff_start_frame(outlink, fifo->root.next->buf);
-        ff_draw_slice (outlink, 0, outlink->h, 1);
-        ff_end_frame  (outlink);
+        if ((ret = ff_start_frame(outlink, fifo->root.next->buf)) < 0 ||
+            (ret = ff_draw_slice(outlink, 0, outlink->h, 1)) < 0 ||
+            (ret = ff_end_frame(outlink)) < 0)
+            return ret;
+
         queue_pop(fifo);
         break;
     case AVMEDIA_TYPE_AUDIO:
@@ -268,18 +275,18 @@ AVFilter avfilter_vf_fifo = {
 
     .priv_size = sizeof(FifoContext),
 
-    .inputs    = (const AVFilterPad[]) {{ .name      = "default",
-                                    .type            = AVMEDIA_TYPE_VIDEO,
-                                    .get_video_buffer= ff_null_get_video_buffer,
-                                    .start_frame     = start_frame,
-                                    .draw_slice      = draw_slice,
-                                    .end_frame       = end_frame,
-                                    .rej_perms       = AV_PERM_REUSE2, },
-                                  { .name = NULL}},
-    .outputs   = (const AVFilterPad[]) {{ .name      = "default",
-                                    .type            = AVMEDIA_TYPE_VIDEO,
-                                    .request_frame   = request_frame, },
-                                  { .name = NULL}},
+    .inputs    = (const AVFilterPad[]) {{ .name            = "default",
+                                          .type            = AVMEDIA_TYPE_VIDEO,
+                                          .get_video_buffer= ff_null_get_video_buffer,
+                                          .start_frame     = add_to_queue,
+                                          .draw_slice      = draw_slice,
+                                          .end_frame       = end_frame,
+                                          .rej_perms       = AV_PERM_REUSE2, },
+                                        { .name = NULL}},
+    .outputs   = (const AVFilterPad[]) {{ .name            = "default",
+                                          .type            = AVMEDIA_TYPE_VIDEO,
+                                          .request_frame   = request_frame, },
+                                        { .name = NULL}},
 };
 
 AVFilter avfilter_af_afifo = {
@@ -291,14 +298,14 @@ AVFilter avfilter_af_afifo = {
 
     .priv_size = sizeof(FifoContext),
 
-    .inputs    = (AVFilterPad[]) {{ .name             = "default",
-                                    .type             = AVMEDIA_TYPE_AUDIO,
-                                    .get_audio_buffer = ff_null_get_audio_buffer,
-                                    .filter_samples   = add_to_queue,
-                                    .rej_perms        = AV_PERM_REUSE2, },
-                                  { .name = NULL}},
-    .outputs   = (AVFilterPad[]) {{ .name             = "default",
-                                    .type             = AVMEDIA_TYPE_AUDIO,
-                                    .request_frame    = request_frame, },
-                                  { .name = NULL}},
+    .inputs    = (const AVFilterPad[]) {{ .name             = "default",
+                                          .type             = AVMEDIA_TYPE_AUDIO,
+                                          .get_audio_buffer = ff_null_get_audio_buffer,
+                                          .filter_samples   = add_to_queue,
+                                          .rej_perms        = AV_PERM_REUSE2, },
+                                        { .name = NULL}},
+    .outputs   = (const AVFilterPad[]) {{ .name             = "default",
+                                          .type             = AVMEDIA_TYPE_AUDIO,
+                                          .request_frame    = request_frame, },
+                                        { .name = NULL}},
 };

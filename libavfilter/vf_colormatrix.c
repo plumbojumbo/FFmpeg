@@ -61,6 +61,7 @@ typedef struct {
     char src[256];
     char dst[256];
     int hsub, vsub;
+    AVFilterBufferRef *outpicref;
 } ColorMatrixContext;
 
 #define ma m[0][0]
@@ -339,20 +340,22 @@ static AVFilterBufferRef *get_video_buffer(AVFilterLink *inlink, int perms, int 
     return picref;
 }
 
-static void start_frame(AVFilterLink *link, AVFilterBufferRef *picref)
-{
-    AVFilterBufferRef *outpicref = avfilter_ref_buffer(picref, ~0);
-
-    link->dst->outputs[0]->out_buf = outpicref;
-
-    ff_start_frame(link->dst->outputs[0], outpicref);
-}
-
-static void end_frame(AVFilterLink *link)
+static int start_frame(AVFilterLink *link, AVFilterBufferRef *picref)
 {
     AVFilterContext *ctx = link->dst;
     ColorMatrixContext *color = ctx->priv;
-    AVFilterBufferRef *out = link->dst->outputs[0]->out_buf;
+    AVFilterBufferRef *outpicref = avfilter_ref_buffer(picref, ~0);
+
+    color->outpicref = outpicref;
+
+    return ff_start_frame(link->dst->outputs[0], outpicref);
+}
+
+static int end_frame(AVFilterLink *link)
+{
+    AVFilterContext *ctx = link->dst;
+    ColorMatrixContext *color = ctx->priv;
+    AVFilterBufferRef *out = color->outpicref;
 
     if (link->cur_buf->format == PIX_FMT_YUV422P)
         process_frame_yuv422p(color, out, link->cur_buf);
@@ -362,11 +365,10 @@ static void end_frame(AVFilterLink *link)
         process_frame_uyvy422(color, out, link->cur_buf);
 
     ff_draw_slice(ctx->outputs[0], 0, link->dst->outputs[0]->h, 1);
-    ff_end_frame(ctx->outputs[0]);
-    avfilter_unref_buffer(link->cur_buf);
+    return ff_end_frame(ctx->outputs[0]);
 }
 
-static void null_draw_slice(AVFilterLink *link, int y, int h, int slice_dir) { }
+static int null_draw_slice(AVFilterLink *link, int y, int h, int slice_dir) { return 0; }
 
 AVFilter avfilter_vf_colormatrix = {
     .name          = "colormatrix",

@@ -173,6 +173,7 @@ External library support:
   --enable-libaacplus      enable AAC+ encoding via libaacplus [no]
   --enable-libass          enable libass subtitles rendering [no]
   --enable-libbluray       enable BluRay reading using libbluray [no]
+  --enable-libcaca         enable textual display using libcaca
   --enable-libcelt         enable CELT decoding via libcelt [no]
   --enable-libcdio         enable audio CD grabbing with libcdio
   --enable-libdc1394       enable IIDC-1394 grabbing using libdc1394
@@ -630,27 +631,35 @@ prepend(){
 }
 
 add_cppflags(){
-    append CPPFLAGS $($filter_cppflags "$@")
+    append CPPFLAGS "$@"
 }
 
 add_cflags(){
-    append CFLAGS $($filter_cflags "$@")
+    append CFLAGS $($cflags_filter "$@")
 }
 
 add_cxxflags(){
-    append CXXFLAGS $($filter_cflags "$@")
+    append CXXFLAGS $($cflags_filter "$@")
 }
 
 add_asflags(){
-    append ASFLAGS $($filter_asflags "$@")
+    append ASFLAGS $($asflags_filter "$@")
 }
 
 add_ldflags(){
-    append LDFLAGS "$@"
+    append LDFLAGS $($ldflags_filter "$@")
 }
 
 add_extralibs(){
-    prepend extralibs "$@"
+    prepend extralibs $($ldflags_filter "$@")
+}
+
+add_host_cflags(){
+    append host_cflags $($host_cflags_filter "$@")
+}
+
+add_host_ldflags(){
+    append host_ldflags $($host_ldflags_filter "$@")
 }
 
 check_cmd(){
@@ -658,11 +667,15 @@ check_cmd(){
     "$@" >> $logfile 2>&1
 }
 
+cc_o(){
+    eval printf '%s\\n' $CC_O
+}
+
 check_cc(){
     log check_cc "$@"
     cat > $TMPC
     log_file $TMPC
-    check_cmd $cc $CPPFLAGS $CFLAGS "$@" -c -o $TMPO $TMPC
+    check_cmd $cc $CPPFLAGS $CFLAGS "$@" -c $(cc_o $TMPO) $TMPC
 }
 
 check_cxx(){
@@ -714,7 +727,9 @@ check_ld(){
     for f; do
         test "${f}" = "${f#-l}" && flags="$flags $f" || libs="$libs $f"
     done
-    check_$type $($filter_cflags $flags) || return
+    check_$type $($cflags_filter $flags) || return
+    flags=$($ldflags_filter $flags)
+    libs=$($ldflags_filter $libs)
     check_cmd $ld $LDFLAGS $flags -o $TMPE $TMPO $libs $extralibs
 }
 
@@ -734,7 +749,6 @@ check_code(){
 
 check_cppflags(){
     log check_cppflags "$@"
-    set -- $($filter_cppflags "$@")
     check_cc "$@" <<EOF && append CPPFLAGS "$@"
 int x;
 EOF
@@ -742,7 +756,7 @@ EOF
 
 check_cflags(){
     log check_cflags "$@"
-    set -- $($filter_cflags "$@")
+    set -- $($cflags_filter "$@")
     check_cc "$@" <<EOF && append CFLAGS "$@"
 int x;
 EOF
@@ -750,7 +764,7 @@ EOF
 
 check_cxxflags(){
     log check_cxxflags "$@"
-    set -- $($filter_cflags "$@")
+    set -- $($cflags_filter "$@")
     check_cxx "$@" <<EOF && append CXXFLAGS "$@"
 int x;
 EOF
@@ -842,7 +856,7 @@ check_cpp_condition(){
     header=$1
     condition=$2
     shift 2
-    check_cpp $($filter_cppflags "$@") <<EOF
+    check_cpp "$@" <<EOF
 #include <$header>
 #if !($condition)
 #error "unsatisfied condition: $condition"
@@ -982,6 +996,7 @@ check_host_cc(){
 
 check_host_cflags(){
     log check_host_cflags "$@"
+    set -- $($host_cflags_filter "$@")
     check_host_cc "$@" <<EOF && append host_cflags "$@"
 int x;
 EOF
@@ -1044,6 +1059,7 @@ CONFIG_LIST="
     fft
     fontconfig
     frei0r
+    gcrypt
     gnutls
     gpl
     gray
@@ -1051,6 +1067,7 @@ CONFIG_LIST="
     libaacplus
     libass
     libbluray
+    libcaca
     libcdio
     libcelt
     libdc1394
@@ -1088,6 +1105,7 @@ CONFIG_LIST="
     memalign_hack
     memory_poisoning
     mpegaudiodsp
+    nettle
     network
     nonfree
     openal
@@ -1693,6 +1711,7 @@ w64_demuxer_deps="wav_demuxer"
 alsa_indev_deps="alsa_asoundlib_h snd_pcm_htimestamp"
 alsa_outdev_deps="alsa_asoundlib_h"
 bktr_indev_deps_any="dev_bktr_ioctl_bt848_h machine_ioctl_bt848_h dev_video_bktr_ioctl_bt848_h dev_ic_bt8xx_h"
+caca_outdev_deps="libcaca"
 dshow_indev_deps="IBaseFilter"
 dshow_indev_extralibs="-lpsapi -lole32 -lstrmiids -luuid"
 dv1394_indev_deps="dv1394 dv_demuxer"
@@ -1718,6 +1737,9 @@ x11_grab_device_indev_deps="x11grab"
 
 # protocols
 bluray_protocol_deps="libbluray"
+ffrtmpcrypt_protocol_deps="!librtmp_protocol"
+ffrtmpcrypt_protocol_deps_any="gcrypt nettle openssl"
+ffrtmpcrypt_protocol_select="tcp_protocol"
 ffrtmphttp_protocol_deps="!librtmp_protocol"
 ffrtmphttp_protocol_select="http_protocol"
 gopher_protocol_deps="network"
@@ -1735,12 +1757,12 @@ mmsh_protocol_select="http_protocol"
 mmst_protocol_deps="network"
 rtmp_protocol_deps="!librtmp_protocol"
 rtmp_protocol_select="tcp_protocol"
+rtmpe_protocol_select="ffrtmpcrypt_protocol"
 rtmps_protocol_deps="!librtmp_protocol"
 rtmps_protocol_select="tls_protocol"
-rtmpt_protocol_deps="!librtmp_protocol"
 rtmpt_protocol_select="ffrtmphttp_protocol"
-rtmpts_protocol_deps="!librtmp_protocol"
-rtmpts_protocol_select="ffrtmphttp_protocol"
+rtmpte_protocol_select="ffrtmpcrypt_protocol ffrtmphttp_protocol"
+rtmpts_protocol_select="ffrtmphttp_protocol https_protocol"
 rtp_protocol_select="udp_protocol"
 sctp_protocol_deps="network netinet_sctp_h"
 tcp_protocol_deps="network"
@@ -1799,6 +1821,20 @@ ffserver_extralibs='$ldl'
 doc_deps_any="texi2html makeinfo pod2man"
 
 # tests
+colormatrix1_test_deps="colormatrix_filter"
+colormatrix2_test_deps="colormatrix_filter"
+flashsv2_test_deps="zlib"
+mpg_test_deps="mpeg1system_muxer mpegps_demuxer"
+mpng_test_deps="zlib"
+pp_test_deps="mp_filter"
+pp2_test_deps="mp_filter"
+pp3_test_deps="mp_filter"
+pp4_test_deps="mp_filter"
+pp5_test_deps="mp_filter"
+pp6_test_deps="mp_filter"
+seek_lavf_mxf_d10_test_deps="mxf_d10_test"
+zlib_test_deps="zlib"
+zmbv_test_deps="zlib"
 
 test_deps(){
     suf1=$1
@@ -1812,8 +1848,6 @@ test_deps(){
         done
     done
 }
-
-seek_lavf_mxf_d10_test_deps="mxf_d10_test"
 
 test_deps _muxer _demuxer                                               \
     aiff                                                                \
@@ -1839,20 +1873,6 @@ test_deps _muxer _demuxer                                               \
     voc                                                                 \
     wav                                                                 \
     yuv4mpegpipe=yuv4mpeg                                               \
-
-colormatrix1_test_deps="colormatrix_filter"
-colormatrix2_test_deps="colormatrix_filter"
-flashsv2_test_deps="zlib"
-mpg_test_deps="mpeg1system_muxer mpegps_demuxer"
-mpng_test_deps="zlib"
-pp_test_deps="mp_filter"
-pp2_test_deps="mp_filter"
-pp3_test_deps="mp_filter"
-pp4_test_deps="mp_filter"
-pp5_test_deps="mp_filter"
-pp6_test_deps="mp_filter"
-zlib_test_deps="zlib"
-zmbv_test_deps="zlib"
 
 # default parameters
 
@@ -1938,12 +1958,18 @@ LIB_INSTALL_EXTRA_CMD='$$(RANLIB) "$(LIBDIR)/$(LIBNAME)"'
 SLIB_INSTALL_NAME='$(SLIBNAME_WITH_VERSION)'
 SLIB_INSTALL_LINKS='$(SLIBNAME_WITH_MAJOR) $(SLIBNAME)'
 
+asflags_filter=echo
+cflags_filter=echo
+ldflags_filter=echo
+
 AS_O='-o $@'
 CC_O='-o $@'
 CXX_O='-o $@'
 
 host_cflags='-D_ISOC99_SOURCE -D_XOPEN_SOURCE=600 -O3 -g'
 host_libs='-lm'
+host_cflags_filter=echo
+host_ldflags_filter=echo
 
 target_path='$(CURDIR)'
 
@@ -2221,9 +2247,77 @@ EOF
     die "Sanity test failed."
 fi
 
-filter_asflags=echo
-filter_cflags=echo
-filter_cppflags=echo
+pgi_flags(){
+    for flag; do
+        case $flag in
+            -fomit-frame-pointer) echo -Mnoframe ;;
+            -g)                   echo -gopt ;;
+            *)                    echo $flag ;;
+        esac
+    done
+}
+
+suncc_flags(){
+    for flag; do
+        case $flag in
+            -march=*|-mcpu=*)
+                case "${flag#*=}" in
+                    native)                   echo -xtarget=native       ;;
+                    v9|niagara)               echo -xarch=sparc          ;;
+                    ultrasparc)               echo -xarch=sparcvis       ;;
+                    ultrasparc3|niagara2)     echo -xarch=sparcvis2      ;;
+                    i586|pentium)             echo -xchip=pentium        ;;
+                    i686|pentiumpro|pentium2) echo -xtarget=pentium_pro  ;;
+                    pentium3*|c3-2)           echo -xtarget=pentium3     ;;
+                    pentium-m)          echo -xarch=sse2 -xchip=pentium3 ;;
+                    pentium4*)          echo -xtarget=pentium4           ;;
+                    prescott|nocona)    echo -xarch=sse3 -xchip=pentium4 ;;
+                    *-sse3)             echo -xarch=sse3                 ;;
+                    core2)              echo -xarch=ssse3 -xchip=core2   ;;
+                    amdfam10|barcelona)       echo -xarch=sse4_1         ;;
+                    athlon-4|athlon-[mx]p)    echo -xarch=ssea           ;;
+                    k8|opteron|athlon64|athlon-fx)
+                                              echo -xarch=sse2a          ;;
+                    athlon*)                  echo -xarch=pentium_proa   ;;
+                esac
+                ;;
+            -std=c99)             echo -xc99              ;;
+            -fomit-frame-pointer) echo -xregs=frameptr    ;;
+            -fPIC)                echo -KPIC -xcode=pic32 ;;
+            -W*,*)                echo $flag              ;;
+            -f*-*|-W*)                                    ;;
+            *)                    echo $flag              ;;
+        esac
+    done
+}
+
+tms470_flags(){
+    for flag; do
+        case $flag in
+            -march=*|-mcpu=*)
+                case "${flag#*=}" in
+                    armv7-a|cortex-a*)      echo -mv=7a8 ;;
+                    armv7-r|cortex-r*)      echo -mv=7r4 ;;
+                    armv7-m|cortex-m*)      echo -mv=7m3 ;;
+                    armv6*|arm11*)          echo -mv=6   ;;
+                    armv5*e|arm[79]*e*|arm9[24]6*|arm96*|arm102[26])
+                                            echo -mv=5e  ;;
+                    armv4*|arm7*|arm9[24]*) echo -mv=4   ;;
+                esac
+                ;;
+            -mfpu=neon)     echo --float_support=vfpv3 --neon ;;
+            -mfpu=vfp)      echo --float_support=vfpv2        ;;
+            -mfpu=vfpv3)    echo --float_support=vfpv3        ;;
+            -msoft-float)   echo --float_support=vfplib       ;;
+            -O[0-3]|-mf=*)  echo $flag                        ;;
+            -g)             echo -g -mn                       ;;
+            -pds=*)         echo $flag                        ;;
+            -D*|-I*)        echo $flag                        ;;
+            --gcc|--abi=*)  echo $flag                        ;;
+            -me)            echo $flag                        ;;
+        esac
+    done
+}
 
 if   $cc -v 2>&1 | grep -q '^gcc.*LLVM'; then
     cc_type=llvm_gcc
@@ -2231,8 +2325,8 @@ if   $cc -v 2>&1 | grep -q '^gcc.*LLVM'; then
     cc_ident="llvm-gcc $($cc -dumpversion) $gcc_extra_ver"
     CC_DEPFLAGS='-MMD -MF $(@:.o=.d) -MT $@'
     AS_DEPFLAGS='-MMD -MF $(@:.o=.d) -MT $@'
-    speed_cflags='-O3'
-    size_cflags='-Os'
+    cflags_speed='-O3'
+    cflags_size='-Os'
 elif $cc -v 2>&1 | grep -qi ^gcc; then
     cc_type=gcc
     gcc_version=$($cc --version | head -n1)
@@ -2244,30 +2338,29 @@ elif $cc -v 2>&1 | grep -qi ^gcc; then
         CC_DEPFLAGS='-MMD -MF $(@:.o=.d) -MT $@'
         AS_DEPFLAGS='-MMD -MF $(@:.o=.d) -MT $@'
     fi
-    speed_cflags='-O3'
-    size_cflags='-Os'
+    cflags_speed='-O3'
+    cflags_size='-Os'
 elif $cc --version 2>/dev/null | grep -q Intel; then
     cc_type=icc
     cc_ident=$($cc --version | head -n1)
-    icc_version=$($cc -dumpversion)
     CC_DEPFLAGS='-MMD'
     AS_DEPFLAGS='-MMD'
-    speed_cflags='-O3'
-    size_cflags='-Os'
-    noopt_cflags='-O1'
+    cflags_speed='-O3'
+    cflags_size='-Os'
+    cflags_noopt='-O1'
 elif $cc -v 2>&1 | grep -q xlc; then
     cc_type=xlc
     cc_ident=$($cc -qversion 2>/dev/null | head -n1)
-    speed_cflags='-O5'
-    size_cflags='-O5 -qcompact'
+    cflags_speed='-O5'
+    cflags_size='-O5 -qcompact'
 elif $cc -V 2>/dev/null | grep -q Compaq; then
     cc_type=ccc
     cc_ident=$($cc -V | head -n1 | cut -d' ' -f1-3)
     DEPFLAGS='$(CPPFLAGS) $(CFLAGS) -M'
     debuglevel=3
     add_ldflags -Wl,-z,now # calls to libots crash without this
-    speed_cflags='-fast'
-    size_cflags='-O1'
+    cflags_speed='-fast'
+    cflags_size='-O1'
 elif $cc --vsn 2>/dev/null | grep -q "ARM C/C++ Compiler"; then
     test -d "$sysroot" || die "No valid sysroot specified."
     cc_type=armcc
@@ -2283,130 +2376,62 @@ elif $cc --vsn 2>/dev/null | grep -q "ARM C/C++ Compiler"; then
     as_default="${cross_prefix}gcc"
     CC_DEPFLAGS='-MMD'
     AS_DEPFLAGS='-MMD'
-    speed_cflags='-O3'
-    size_cflags='-Os'
-    filter_asflags="filter_out -W${armcc_opt}*"
+    cflags_speed='-O3'
+    cflags_size='-Os'
+    asflags_filter="filter_out -W${armcc_opt}*"
 elif $cc -version 2>/dev/null | grep -q TMS470; then
     cc_type=tms470
     cc_ident=$($cc -version | head -n1 | tr -s ' ')
-    cc="$cc --gcc --abi=eabi -eo=.o -mc -me"
-    CC_O='-fr=$(@D)'
+    cc="$cc --gcc --abi=eabi -me"
+    CC_O='-fe=$@'
     as_default="${cross_prefix}gcc"
     ld_default="${cross_prefix}gcc"
-    TMPO=$(basename $TMPC .c).o
-    append TMPFILES $TMPO
     add_cflags -D__gnuc_va_list=va_list -D__USER_LABEL_PREFIX__=
     CC_DEPFLAGS='-ppa -ppd=$(@:.o=.d)'
     AS_DEPFLAGS='-MMD'
-    speed_cflags='-O3 -mf=5'
-    size_cflags='-O3 -mf=2'
-    filter_cflags=tms470_flags
-    tms470_flags(){
-        for flag; do
-            case $flag in
-                -march=*|-mcpu=*)
-                    case "${flag#*=}" in
-                        armv7-a|cortex-a*)      echo -mv=7a8 ;;
-                        armv7-r|cortex-r*)      echo -mv=7r4 ;;
-                        armv7-m|cortex-m*)      echo -mv=7m3 ;;
-                        armv6*|arm11*)          echo -mv=6   ;;
-                        armv5*e|arm[79]*e*|arm9[24]6*|arm96*|arm102[26])
-                                                echo -mv=5e  ;;
-                        armv4*|arm7*|arm9[24]*) echo -mv=4   ;;
-                    esac
-                    ;;
-                -mfpu=neon)     echo --float_support=vfpv3 --neon ;;
-                -mfpu=vfp)      echo --float_support=vfpv2        ;;
-                -mfpu=vfpv3)    echo --float_support=vfpv3        ;;
-                -msoft-float)   echo --float_support=vfplib       ;;
-                -O[0-3]|-mf=*)  echo $flag                        ;;
-                -g)             echo -g -mn                       ;;
-                -pds=*)         echo $flag                        ;;
-            esac
-        done
-    }
+    cflags_speed='-O3 -mf=5'
+    cflags_size='-O3 -mf=2'
+    cflags_filter=tms470_flags
 elif $cc -v 2>&1 | grep -q clang; then
     cc_type=clang
     cc_ident=$($cc --version | head -n1)
     CC_DEPFLAGS='-MMD'
     AS_DEPFLAGS='-MMD'
-    speed_cflags='-O3'
-    size_cflags='-Os'
+    cflags_speed='-O3'
+    cflags_size='-Os'
 elif $cc -V 2>&1 | grep -q Sun; then
     cc_type=suncc
     cc_ident=$($cc -V 2>&1 | head -n1 | cut -d' ' -f 2-)
     DEPEND_CMD='$(DEPCC) $(DEPFLAGS) $< | sed -e "1s,^.*: ,$@: ," -e "\$$!s,\$$, \\\," -e "1!s,^.*: , ," > $(@:.o=.d)'
     DEPFLAGS='$(CPPFLAGS) $(CFLAGS) -xM1'
     add_ldflags -xc99
-    speed_cflags='-O5'
-    size_cflags='-O5 -xspace'
-    filter_cflags=suncc_flags
-    suncc_flags(){
-        for flag; do
-            case $flag in
-                -march=*|-mcpu=*)
-                    case "${flag#*=}" in
-                        native)                   echo -xtarget=native       ;;
-                        v9|niagara)               echo -xarch=sparc          ;;
-                        ultrasparc)               echo -xarch=sparcvis       ;;
-                        ultrasparc3|niagara2)     echo -xarch=sparcvis2      ;;
-                        i586|pentium)             echo -xchip=pentium        ;;
-                        i686|pentiumpro|pentium2) echo -xtarget=pentium_pro  ;;
-                        pentium3*|c3-2)           echo -xtarget=pentium3     ;;
-                        pentium-m)          echo -xarch=sse2 -xchip=pentium3 ;;
-                        pentium4*)          echo -xtarget=pentium4           ;;
-                        prescott|nocona)    echo -xarch=sse3 -xchip=pentium4 ;;
-                        *-sse3)             echo -xarch=sse3                 ;;
-                        core2)              echo -xarch=ssse3 -xchip=core2   ;;
-                        amdfam10|barcelona)       echo -xarch=sse4_1         ;;
-                        athlon-4|athlon-[mx]p)    echo -xarch=ssea           ;;
-                        k8|opteron|athlon64|athlon-fx)
-                                                  echo -xarch=sse2a          ;;
-                        athlon*)                  echo -xarch=pentium_proa   ;;
-                    esac
-                    ;;
-                -std=c99)             echo -xc99              ;;
-                -fomit-frame-pointer) echo -xregs=frameptr    ;;
-                -fPIC)                echo -KPIC -xcode=pic32 ;;
-                -W*,*)                echo $flag              ;;
-                -f*-*|-W*)                                    ;;
-                *)                    echo $flag              ;;
-            esac
-        done
-    }
+    cflags_speed='-O5'
+    cflags_size='-O5 -xspace'
+    cflags_filter=suncc_flags
 elif $cc -v 2>&1 | grep -q 'PathScale\|Path64'; then
     cc_type=pathscale
     cc_ident=$($cc -v 2>&1 | head -n1 | tr -d :)
     CC_DEPFLAGS='-MMD -MF $(@:.o=.d) -MT $@'
     AS_DEPFLAGS='-MMD -MF $(@:.o=.d) -MT $@'
-    speed_cflags='-O2'
-    size_cflags='-Os'
-    filter_cflags='filter_out -Wdisabled-optimization'
+    cflags_speed='-O2'
+    cflags_size='-Os'
+    cflags_filter='filter_out -Wdisabled-optimization'
 elif $cc -v 2>&1 | grep -q Open64; then
     cc_type=open64
     cc_ident=$($cc -v 2>&1 | head -n1 | tr -d :)
     CC_DEPFLAGS='-MMD -MF $(@:.o=.d) -MT $@'
     AS_DEPFLAGS='-MMD -MF $(@:.o=.d) -MT $@'
-    speed_cflags='-O2'
-    size_cflags='-Os'
-    filter_cflags='filter_out -Wdisabled-optimization|-Wtype-limits|-fno-signed-zeros'
+    cflags_speed='-O2'
+    cflags_size='-Os'
+    cflags_filter='filter_out -Wdisabled-optimization|-Wtype-limits|-fno-signed-zeros'
 elif $cc -V 2>&1 | grep -q Portland; then
     cc_type=pgi
     cc_ident="PGI $($cc -V 2>&1 | awk '/^pgcc/ { print $2; exit }')"
     opt_common='-alias=ansi -Mlre -Mpre'
-    speed_cflags="-O3 -Mautoinline -Munroll=c:4 $opt_common"
-    size_cflags="-O2 -Munroll=c:1 $opt_common"
-    noopt_cflags="-O1"
-    filter_cflags=pgi_flags
-    pgi_flags(){
-        for flag; do
-            case $flag in
-                -fomit-frame-pointer) echo -Mnoframe ;;
-                -g)                   echo -gopt ;;
-                *)                    echo $flag ;;
-            esac
-        done
-    }
+    cflags_speed="-O3 -Mautoinline -Munroll=c:4 $opt_common"
+    cflags_size="-O2 -Munroll=c:1 $opt_common"
+    cflags_noopt="-O1"
+    cflags_filter=pgi_flags
 fi
 
 test -n "$cc_type" && enable $cc_type ||
@@ -3312,6 +3337,7 @@ enabled libbluray  && require libbluray libbluray/bluray.h bd_open -lbluray
 enabled libcelt    && require libcelt celt/celt.h celt_decode -lcelt0 &&
                       { check_lib celt/celt.h celt_decoder_create_custom -lcelt0 ||
                         die "ERROR: libcelt version must be >= 0.11.0."; }
+enabled libcaca    && require_pkg_config caca caca.h caca_create_canvas
 enabled libfaac    && require2 libfaac "stdint.h faac.h" faacEncGetVersion -lfaac
 enabled libfdk_aac && require  libfdk_aac fdk-aac/aacenc_lib.h aacEncOpen -lfdk-aac
 enabled libfreetype && require_pkg_config freetype2 "ft2build.h freetype/freetype.h" FT_Init_FreeType
@@ -3357,6 +3383,11 @@ enabled openssl    && { check_lib openssl/ssl.h SSL_library_init -lssl -lcrypto 
                         check_lib openssl/ssl.h SSL_library_init -lssl32 -leay32 ||
                         check_lib openssl/ssl.h SSL_library_init -lssl -lcrypto -lws2_32 -lgdi32 ||
                         die "ERROR: openssl not found"; }
+
+if enabled gnutls; then
+    { check_lib nettle/bignum.h nettle_mpz_get_str_256 -lnettle -lhogweed -lgmp && enable nettle; } ||
+    { check_lib gcrypt.h gcry_mpi_new -lgcrypt && enable gcrypt; }
+fi
 
 # libdc1394 check
 if enabled libdc1394; then
@@ -3505,11 +3536,11 @@ fi
 if [ -n "$optflags" ]; then
     add_cflags $optflags
 elif enabled small; then
-    add_cflags $size_cflags
+    add_cflags $cflags_size
 elif enabled optimizations; then
-    add_cflags $speed_cflags
+    add_cflags $cflags_speed
 else
-    add_cflags $noopt_cflags
+    add_cflags $cflags_noopt
 fi
 check_cflags -fno-math-errno
 check_cflags -fno-signed-zeros
@@ -3537,6 +3568,7 @@ if enabled icc; then
     # icc 11.0 and 11.1 work with ebp_available, but don't pass the test
     enable ebp_available
     if enabled x86_32; then
+        icc_version=$($cc -dumpversion)
         test ${icc_version%%.*} -ge 11 &&
             check_cflags -falign-stack=maintain-16-byte ||
             disable aligned_stack
@@ -3688,6 +3720,7 @@ echo "frei0r enabled            ${frei0r-no}"
 echo "gnutls enabled            ${gnutls-no}"
 echo "libaacplus enabled        ${libaacplus-no}"
 echo "libass enabled            ${libass-no}"
+echo "libcaca enabled           ${libcaca-no}"
 echo "libcdio support           ${libcdio-no}"
 echo "libcelt enabled           ${libcelt-no}"
 echo "libdc1394 support         ${libdc1394-no}"

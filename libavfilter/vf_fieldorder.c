@@ -116,20 +116,35 @@ static AVFilterBufferRef *get_video_buffer(AVFilterLink *inlink, int perms, int 
     return ff_get_video_buffer(outlink, perms, w, h);
 }
 
-static void start_frame(AVFilterLink *inlink, AVFilterBufferRef *inpicref)
+static int start_frame(AVFilterLink *inlink, AVFilterBufferRef *inpicref)
 {
     AVFilterContext   *ctx        = inlink->dst;
     AVFilterLink      *outlink    = ctx->outputs[0];
 
-    AVFilterBufferRef *outpicref;
+    AVFilterBufferRef *outpicref, *for_next_filter;
+    int ret = 0;
 
     outpicref = avfilter_ref_buffer(inpicref, ~0);
-    outlink->out_buf = outpicref;
+    if (!outpicref)
+        return AVERROR(ENOMEM);
 
-    ff_start_frame(outlink, outpicref);
+    for_next_filter = avfilter_ref_buffer(outpicref, ~0);
+    if (!for_next_filter) {
+        avfilter_unref_bufferp(&outpicref);
+        return AVERROR(ENOMEM);
+    }
+
+    ret = ff_start_frame(outlink, for_next_filter);
+    if (ret < 0) {
+        avfilter_unref_bufferp(&outpicref);
+        return ret;
+    }
+
+    outlink->out_buf = outpicref;
+    return 0;
 }
 
-static void draw_slice(AVFilterLink *inlink, int y, int h, int slice_dir)
+static int draw_slice(AVFilterLink *inlink, int y, int h, int slice_dir)
 {
     AVFilterContext   *ctx        = inlink->dst;
     FieldOrderContext *fieldorder = ctx->priv;
@@ -143,11 +158,12 @@ static void draw_slice(AVFilterLink *inlink, int y, int h, int slice_dir)
      *  and that complexity will be added later */
     if (  !inpicref->video->interlaced
         || inpicref->video->top_field_first == fieldorder->dst_tff) {
-        ff_draw_slice(outlink, y, h, slice_dir);
+        return ff_draw_slice(outlink, y, h, slice_dir);
     }
+    return 0;
 }
 
-static void end_frame(AVFilterLink *inlink)
+static int end_frame(AVFilterLink *inlink)
 {
     AVFilterContext   *ctx        = inlink->dst;
     FieldOrderContext *fieldorder = ctx->priv;
@@ -211,8 +227,7 @@ static void end_frame(AVFilterLink *inlink)
                 "not interlaced or field order already correct\n");
     }
 
-    ff_end_frame(outlink);
-    avfilter_unref_buffer(inpicref);
+    return ff_end_frame(outlink);
 }
 
 AVFilter avfilter_vf_fieldorder = {
@@ -221,17 +236,17 @@ AVFilter avfilter_vf_fieldorder = {
     .init          = init,
     .priv_size     = sizeof(FieldOrderContext),
     .query_formats = query_formats,
-    .inputs        = (const AVFilterPad[]) {{ .name       = "default",
-                                        .type             = AVMEDIA_TYPE_VIDEO,
-                                        .config_props     = config_input,
-                                        .start_frame      = start_frame,
-                                        .get_video_buffer = get_video_buffer,
-                                        .draw_slice       = draw_slice,
-                                        .end_frame        = end_frame,
-                                        .min_perms        = AV_PERM_READ,
-                                        .rej_perms        = AV_PERM_REUSE2|AV_PERM_PRESERVE,},
-                                      { .name = NULL}},
-    .outputs       = (const AVFilterPad[]) {{ .name       = "default",
-                                        .type             = AVMEDIA_TYPE_VIDEO, },
-                                      { .name = NULL}},
+    .inputs        = (const AVFilterPad[]) {{ .name             = "default",
+                                              .type             = AVMEDIA_TYPE_VIDEO,
+                                              .config_props     = config_input,
+                                              .start_frame      = start_frame,
+                                              .get_video_buffer = get_video_buffer,
+                                              .draw_slice       = draw_slice,
+                                              .end_frame        = end_frame,
+                                              .min_perms        = AV_PERM_READ,
+                                              .rej_perms        = AV_PERM_REUSE2|AV_PERM_PRESERVE,},
+                                            { .name = NULL}},
+    .outputs       = (const AVFilterPad[]) {{ .name             = "default",
+                                              .type             = AVMEDIA_TYPE_VIDEO, },
+                                            { .name = NULL}},
 };

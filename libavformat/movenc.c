@@ -52,7 +52,7 @@ static const AVOption options[] = {
     { "separate_moof", "Write separate moof/mdat atoms for each track", 0, AV_OPT_TYPE_CONST, {.dbl = FF_MOV_FLAG_SEPARATE_MOOF}, INT_MIN, INT_MAX, AV_OPT_FLAG_ENCODING_PARAM, "movflags" },
     { "frag_custom", "Flush fragments on caller requests", 0, AV_OPT_TYPE_CONST, {.dbl = FF_MOV_FLAG_FRAG_CUSTOM}, INT_MIN, INT_MAX, AV_OPT_FLAG_ENCODING_PARAM, "movflags" },
     { "isml", "Create a live smooth streaming feed (for pushing to a publishing point)", 0, AV_OPT_TYPE_CONST, {.dbl = FF_MOV_FLAG_ISML}, INT_MIN, INT_MAX, AV_OPT_FLAG_ENCODING_PARAM, "movflags" },
-    FF_RTP_FLAG_OPTS(MOVMuxContext, rtp_flags)
+    FF_RTP_FLAG_OPTS(MOVMuxContext, rtp_flags),
     { "skip_iods", "Skip writing iods atom.", offsetof(MOVMuxContext, iods_skip), AV_OPT_TYPE_INT, {.dbl = 1}, 0, 1, AV_OPT_FLAG_ENCODING_PARAM},
     { "iods_audio_profile", "iods audio profile atom.", offsetof(MOVMuxContext, iods_audio_profile), AV_OPT_TYPE_INT, {.dbl = -1}, -1, 255, AV_OPT_FLAG_ENCODING_PARAM},
     { "iods_video_profile", "iods video profile atom.", offsetof(MOVMuxContext, iods_video_profile), AV_OPT_TYPE_INT, {.dbl = -1}, -1, 255, AV_OPT_FLAG_ENCODING_PARAM},
@@ -1072,9 +1072,10 @@ static int mov_write_video_tag(AVIOContext *pb, MOVTrack *track)
         mov_write_d263_tag(pb);
     else if(track->enc->codec_id == CODEC_ID_SVQ3)
         mov_write_svq3_tag(pb);
-    else if(track->enc->codec_id == CODEC_ID_AVUI)
+    else if(track->enc->codec_id == CODEC_ID_AVUI) {
         mov_write_extradata_tag(pb, track);
-    else if(track->enc->codec_id == CODEC_ID_DNXHD)
+        avio_wb32(pb, 0);
+    } else if(track->enc->codec_id == CODEC_ID_DNXHD)
         mov_write_avid_tag(pb, track);
     else if(track->enc->codec_id == CODEC_ID_H264) {
         mov_write_avcc_tag(pb, track);
@@ -3584,11 +3585,8 @@ AVOutputFormat ff_mov_muxer = {
     .extensions        = "mov",
     .priv_data_size    = sizeof(MOVMuxContext),
     .audio_codec       = CODEC_ID_AAC,
-#if CONFIG_LIBX264_ENCODER
-    .video_codec       = CODEC_ID_H264,
-#else
-    .video_codec       = CODEC_ID_MPEG4,
-#endif
+    .video_codec       = CONFIG_LIBX264_ENCODER ?
+                         CODEC_ID_H264 : CODEC_ID_MPEG4,
     .write_header      = mov_write_header,
     .write_packet      = mov_write_packet,
     .write_trailer     = mov_write_trailer,
@@ -3625,11 +3623,8 @@ AVOutputFormat ff_mp4_muxer = {
     .extensions        = "mp4",
     .priv_data_size    = sizeof(MOVMuxContext),
     .audio_codec       = CODEC_ID_AAC,
-#if CONFIG_LIBX264_ENCODER
-    .video_codec       = CODEC_ID_H264,
-#else
-    .video_codec       = CODEC_ID_MPEG4,
-#endif
+    .video_codec       = CONFIG_LIBX264_ENCODER ?
+                         CODEC_ID_H264 : CODEC_ID_MPEG4,
     .write_header      = mov_write_header,
     .write_packet      = mov_write_packet,
     .write_trailer     = mov_write_trailer,
@@ -3646,11 +3641,8 @@ AVOutputFormat ff_psp_muxer = {
     .extensions        = "mp4,psp",
     .priv_data_size    = sizeof(MOVMuxContext),
     .audio_codec       = CODEC_ID_AAC,
-#if CONFIG_LIBX264_ENCODER
-    .video_codec       = CODEC_ID_H264,
-#else
-    .video_codec       = CODEC_ID_MPEG4,
-#endif
+    .video_codec       = CONFIG_LIBX264_ENCODER ?
+                         CODEC_ID_H264 : CODEC_ID_MPEG4,
     .write_header      = mov_write_header,
     .write_packet      = mov_write_packet,
     .write_trailer     = mov_write_trailer,

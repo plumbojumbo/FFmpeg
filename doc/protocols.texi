@@ -259,6 +259,10 @@ playpath. If a live stream of that name is not found, it plays the
 recorded stream. The other possible values are @code{live} and
 @code{recorded}.
 
+@item rtmp_pageurl
+URL of the web page in which the media was embedded. By default no
+value will be sent.
+
 @item rtmp_playpath
 Stream identifier to play or to publish. This option overrides the
 parameter specified in the URI.
@@ -267,7 +271,7 @@ parameter specified in the URI.
 URL of the SWF player for the media. By default no value will be sent.
 
 @item rtmp_tcurl
-URL of the target stream.
+URL of the target stream. Defaults to proto://host[:port]/app.
 
 @end table
 
@@ -276,6 +280,15 @@ For example to read with @command{ffplay} a multimedia resource named
 @example
 ffplay rtmp://myserver/vod/sample
 @end example
+
+@section rtmpe
+
+Encrypted Real-Time Messaging Protocol.
+
+The Encrypted Real-Time Messaging Protocol (RTMPE) is used for
+streaming multimedia content within standard cryptographic primitives,
+consisting of Diffie-Hellman key exchange and HMACSHA256, generating
+a pair of RC4 keys.
 
 @section rtmps
 
@@ -290,6 +303,14 @@ Real-Time Messaging Protocol tunneled through HTTP.
 
 The Real-Time Messaging Protocol tunneled through HTTP (RTMPT) is used
 for streaming multimedia content within HTTP requests to traverse
+firewalls.
+
+@section rtmpte
+
+Encrypted Real-Time Messaging Protocol tunneled through HTTP.
+
+The Encrypted Real-Time Messaging Protocol tunneled through HTTP (RTMPTE)
+is used for streaming multimedia content within HTTP requests to traverse
 firewalls.
 
 @section rtmpts
@@ -544,6 +565,48 @@ ffplay tcp://@var{hostname}:@var{port}
 @end example
 
 @end table
+
+@section tls
+
+Transport Layer Security/Secure Sockets Layer
+
+The required syntax for a TLS/SSL url is:
+@example
+tls://@var{hostname}:@var{port}[?@var{options}]
+@end example
+
+@table @option
+
+@item listen
+Act as a server, listening for an incoming connection.
+
+@item cafile=@var{filename}
+Certificate authority file. The file must be in OpenSSL PEM format.
+
+@item cert=@var{filename}
+Certificate file. The file must be in OpenSSL PEM format.
+
+@item key=@var{filename}
+Private key file.
+
+@item verify=@var{0|1}
+Verify the peer's certificate.
+
+@end table
+
+Example command lines:
+
+To create a TLS/SSL server that serves an input stream.
+
+@example
+ffmpeg -i @var{input} -f @var{format} tls://@var{hostname}:@var{port}?listen&cert=@var{server.crt}&key=@var{server.key}
+@end example
+
+To play back a stream from the TLS/SSL server using @command{ffplay}:
+
+@example
+ffplay tls://@var{hostname}:@var{port}
+@end example
 
 @section udp
 

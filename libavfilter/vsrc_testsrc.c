@@ -134,10 +134,14 @@ static int request_frame(AVFilterLink *outlink)
 {
     TestSourceContext *test = outlink->src->priv;
     AVFilterBufferRef *picref;
+    int ret;
 
     if (test->max_pts >= 0 && test->pts >= test->max_pts)
         return AVERROR_EOF;
     picref = ff_get_video_buffer(outlink, AV_PERM_WRITE, test->w, test->h);
+    if (!picref)
+        return AVERROR(ENOMEM);
+
     picref->pts = test->pts++;
     picref->pos = -1;
     picref->video->key_frame = 1;
@@ -147,10 +151,10 @@ static int request_frame(AVFilterLink *outlink)
     test->fill_picture_fn(outlink->src, picref);
     test->nb_frame++;
 
-    ff_start_frame(outlink, avfilter_ref_buffer(picref, ~0));
-    ff_draw_slice(outlink, 0, picref->video->h, 1);
-    ff_end_frame(outlink);
-    avfilter_unref_buffer(picref);
+    if ((ret = ff_start_frame(outlink, picref)) < 0 ||
+        (ret = ff_draw_slice(outlink, 0, test->h, 1)) < 0 ||
+        (ret = ff_end_frame(outlink)) < 0)
+        return ret;
 
     return 0;
 }
@@ -402,10 +406,10 @@ AVFilter avfilter_vsrc_testsrc = {
     .inputs    = (const AVFilterPad[]) {{ .name = NULL}},
 
     .outputs   = (const AVFilterPad[]) {{ .name = "default",
-                                    .type = AVMEDIA_TYPE_VIDEO,
-                                    .request_frame = request_frame,
-                                    .config_props  = config_props, },
-                                  { .name = NULL }},
+                                          .type = AVMEDIA_TYPE_VIDEO,
+                                          .request_frame = request_frame,
+                                          .config_props  = config_props, },
+                                        { .name = NULL }},
 };
 
 #endif /* CONFIG_TESTSRC_FILTER */
@@ -526,10 +530,10 @@ AVFilter avfilter_vsrc_rgbtestsrc = {
     .inputs    = (const AVFilterPad[]) {{ .name = NULL}},
 
     .outputs   = (const AVFilterPad[]) {{ .name = "default",
-                                    .type = AVMEDIA_TYPE_VIDEO,
-                                    .request_frame = request_frame,
-                                    .config_props  = rgbtest_config_props, },
-                                  { .name = NULL }},
+                                          .type = AVMEDIA_TYPE_VIDEO,
+                                          .request_frame = request_frame,
+                                          .config_props  = rgbtest_config_props, },
+                                        { .name = NULL }},
 };
 
 #endif /* CONFIG_RGBTESTSRC_FILTER */

@@ -425,7 +425,7 @@ static av_cold void uninit(AVFilterContext *ctx)
     av_freep(&deshake->avctx);
 }
 
-static void end_frame(AVFilterLink *link)
+static int end_frame(AVFilterLink *link)
 {
     DeshakeContext *deshake = link->dst->priv;
     AVFilterBufferRef *in  = link->cur_buf;
@@ -435,6 +435,7 @@ static void end_frame(AVFilterLink *link)
     float alpha = 2.0 / deshake->refcount;
     char tmp[256];
 
+    link->cur_buf = NULL; /* it is in 'in' now */
     if (deshake->cx < 0 || deshake->cy < 0 || deshake->cw < 0 || deshake->ch < 0) {
         // Find the most likely global motion for the current frame
         find_motion(deshake, (deshake->ref == NULL) ? in->data[0] : deshake->ref->data[0], in->data[0], link->w, link->h, in->linesize[0], &t);
@@ -529,12 +530,12 @@ static void end_frame(AVFilterLink *link)
 
     // Draw the transformed frame information
     ff_draw_slice(link->dst->outputs[0], 0, link->h, 1);
-    ff_end_frame(link->dst->outputs[0]);
-    avfilter_unref_buffer(out);
+    return ff_end_frame(link->dst->outputs[0]);
 }
 
-static void draw_slice(AVFilterLink *link, int y, int h, int slice_dir)
+static int draw_slice(AVFilterLink *link, int y, int h, int slice_dir)
 {
+    return 0;
 }
 
 AVFilter avfilter_vf_deshake = {

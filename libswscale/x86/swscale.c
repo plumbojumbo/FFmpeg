@@ -22,11 +22,14 @@
 #include "config.h"
 #include "libswscale/swscale.h"
 #include "libswscale/swscale_internal.h"
+#include "libavutil/attributes.h"
 #include "libavutil/avassert.h"
 #include "libavutil/intreadwrite.h"
 #include "libavutil/x86_cpu.h"
 #include "libavutil/cpu.h"
 #include "libavutil/pixdesc.h"
+
+#if HAVE_INLINE_ASM
 
 #define DITHER1XBPP
 
@@ -262,6 +265,8 @@ static void yuv2yuvX_sse3(const int16_t *filter, int filterSize,
 }
 #endif
 
+#endif /* HAVE_INLINE_ASM */
+
 #define SCALE_FUNC(filter_n, from_bpc, to_bpc, opt) \
 extern void ff_hscale ## from_bpc ## to ## to_bpc ## _ ## filter_n ## _ ## opt( \
                                                 SwsContext *c, int16_t *data, \
@@ -363,10 +368,11 @@ INPUT_FUNCS(sse2);
 INPUT_FUNCS(ssse3);
 INPUT_FUNCS(avx);
 
-void ff_sws_init_swScale_mmx(SwsContext *c)
+av_cold void ff_sws_init_swScale_mmx(SwsContext *c)
 {
     int cpu_flags = av_get_cpu_flags();
 
+#if HAVE_INLINE_ASM
     if (cpu_flags & AV_CPU_FLAG_MMX)
         sws_init_swScale_MMX(c);
 #if HAVE_MMX2
@@ -377,6 +383,7 @@ void ff_sws_init_swScale_mmx(SwsContext *c)
             c->yuv2planeX = yuv2yuvX_sse3;
     }
 #endif
+#endif /* HAVE_INLINE_ASM */
 
 #if HAVE_YASM
 #define ASSIGN_SCALE_FUNC2(hscalefn, filtersize, opt1, opt2) do { \

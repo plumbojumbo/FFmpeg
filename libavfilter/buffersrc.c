@@ -83,16 +83,8 @@ int av_buffersrc_add_frame(AVFilterContext *buffer_src,
     if (!frame) /* NULL for EOF */
         return av_buffersrc_add_ref(buffer_src, NULL, flags);
 
-    switch (buffer_src->outputs[0]->type) {
-    case AVMEDIA_TYPE_VIDEO:
-        picref = avfilter_get_video_buffer_ref_from_frame(frame, AV_PERM_WRITE);
-        break;
-    case AVMEDIA_TYPE_AUDIO:
-        picref = avfilter_get_audio_buffer_ref_from_frame(frame, AV_PERM_WRITE);
-        break;
-    default:
-        return AVERROR(ENOSYS);
-    }
+    picref = avfilter_get_buffer_ref_from_frame(buffer_src->outputs[0]->type,
+                                                frame, AV_PERM_WRITE);
     if (!picref)
         return AVERROR(ENOMEM);
     ret = av_buffersrc_add_ref(buffer_src, picref, flags);
@@ -382,18 +374,18 @@ static int request_frame(AVFilterLink *link)
 
     switch (link->type) {
     case AVMEDIA_TYPE_VIDEO:
-        ff_start_frame(link, avfilter_ref_buffer(buf, ~0));
-        ff_draw_slice(link, 0, link->h, 1);
-        ff_end_frame(link);
+        if ((ret = ff_start_frame(link, buf)) < 0 ||
+            (ret = ff_draw_slice(link, 0, link->h, 1)) < 0 ||
+            (ret = ff_end_frame(link)) < 0)
+            return ret;
         break;
     case AVMEDIA_TYPE_AUDIO:
-        ret = ff_filter_samples(link, avfilter_ref_buffer(buf, ~0));
+        ret = ff_filter_samples(link, buf);
         break;
     default:
+        avfilter_unref_bufferp(&buf);
         return AVERROR(EINVAL);
     }
-
-    avfilter_unref_buffer(buf);
 
     return ret;
 }
@@ -416,13 +408,13 @@ AVFilter avfilter_vsrc_buffer = {
     .init      = init_video,
     .uninit    = uninit,
 
-    .inputs    = (AVFilterPad[]) {{ .name = NULL }},
-    .outputs   = (AVFilterPad[]) {{ .name            = "default",
-                                    .type            = AVMEDIA_TYPE_VIDEO,
-                                    .request_frame   = request_frame,
-                                    .poll_frame      = poll_frame,
-                                    .config_props    = config_props, },
-                                  { .name = NULL}},
+    .inputs    = (const AVFilterPad[]) {{ .name = NULL }},
+    .outputs   = (const AVFilterPad[]) {{ .name            = "default",
+                                          .type            = AVMEDIA_TYPE_VIDEO,
+                                          .request_frame   = request_frame,
+                                          .poll_frame      = poll_frame,
+                                          .config_props    = config_props, },
+                                        { .name = NULL}},
 };
 
 AVFilter avfilter_asrc_abuffer = {
@@ -434,11 +426,11 @@ AVFilter avfilter_asrc_abuffer = {
     .init      = init_audio,
     .uninit    = uninit,
 
-    .inputs    = (AVFilterPad[]) {{ .name = NULL }},
-    .outputs   = (AVFilterPad[]) {{ .name            = "default",
-                                    .type            = AVMEDIA_TYPE_AUDIO,
-                                    .request_frame   = request_frame,
-                                    .poll_frame      = poll_frame,
-                                    .config_props    = config_props, },
-                                  { .name = NULL}},
+    .inputs    = (const AVFilterPad[]) {{ .name = NULL }},
+    .outputs   = (const AVFilterPad[]) {{ .name            = "default",
+                                          .type            = AVMEDIA_TYPE_AUDIO,
+                                          .request_frame   = request_frame,
+                                          .poll_frame      = poll_frame,
+                                          .config_props    = config_props, },
+                                        { .name = NULL}},
 };

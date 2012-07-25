@@ -960,35 +960,8 @@ aevalsrc="0.1*sin(2*PI*(360-2.5/2)*t) : 0.1*sin(2*PI*(360+2.5/2)*t)"
 
 @section amovie
 
-Read an audio stream from a movie container.
-
-It accepts the syntax: @var{movie_name}[:@var{options}] where
-@var{movie_name} is the name of the resource to read (not necessarily
-a file but also a device or a stream accessed through some protocol),
-and @var{options} is an optional sequence of @var{key}=@var{value}
-pairs, separated by ":".
-
-The description of the accepted options follows.
-
-@table @option
-
-@item format_name, f
-Specify the format assumed for the movie to read, and can be either
-the name of a container or an input device. If not specified the
-format is guessed from @var{movie_name} or by probing.
-
-@item seek_point, sp
-Specify the seek point in seconds, the frames will be output
-starting from this seek point, the parameter is evaluated with
-@code{av_strtod} so the numerical value may be suffixed by an IS
-postfix. Default value is "0".
-
-@item stream_index, si
-Specify the index of the audio stream to read. If the value is -1,
-the best suited audio stream will be automatically selected. Default
-value is "-1".
-
-@end table
+This is the same as @ref{src_movie} source, except it selects an audio
+stream by default.
 
 @section anullsrc
 
@@ -1100,6 +1073,31 @@ The configure output will show the video filters included in your
 build.
 
 Below is a description of the currently available video filters.
+
+@section alphaextract
+
+Extract the alpha component from the input as a grayscale video. This
+is especially useful with the @var{alphamerge} filter.
+
+@section alphamerge
+
+Add or replace the alpha component of the primary input with the
+grayscale value of a second input. This is intended for use with
+@var{alphaextract} to allow the transmission or storage of frame
+sequences that have alpha in a format that doesn't support an alpha
+channel.
+
+For example, to reconstruct full frames from a normal YUV-encoded video
+and a separate video created with @var{alphaextract}, you might use:
+@example
+movie=in_alpha.mkv [alpha]; [in][alpha] alphamerge [out]
+@end example
+
+Since this filter is designed for reconstruction, it operates on frame
+sequences without considering timestamps, and terminates when either
+input reaches end of stream. This will cause problems if your encoding
+pipeline drops frames. If you're trying to apply an image as an
+overlay to a video stream, consider the @var{overlay} filter instead.
 
 @section ass
 
@@ -3614,9 +3612,10 @@ to the pad with identifier "in".
 "color=c=red@@0.2:s=qcif:r=10 [color]; [in][color] overlay [out]"
 @end example
 
+@anchor{src_movie}
 @section movie
 
-Read a video stream from a movie container.
+Read audio and/or video stream(s) from a movie container.
 
 It accepts the syntax: @var{movie_name}[:@var{options}] where
 @var{movie_name} is the name of the resource to read (not necessarily
@@ -3639,13 +3638,22 @@ starting from this seek point, the parameter is evaluated with
 @code{av_strtod} so the numerical value may be suffixed by an IS
 postfix. Default value is "0".
 
+@item streams, s
+Specifies the streams to read. Several streams can be specified, separated
+by "+". The source will then have as many outputs, in the same order. The
+syntax is explained in the @ref{Stream specifiers} chapter. Two special
+names, "dv" and "da" specify respectively the default (best suited) video
+and audio stream. Default is "dv", or "da" if the filter is called as
+"amovie".
+
 @item stream_index, si
 Specifies the index of the video stream to read. If the value is -1,
 the best suited video stream will be automatically selected. Default
-value is "-1".
+value is "-1". Deprecated. If the filter is called "amovie", it will select
+audio instead of video.
 
 @item loop
-Specifies how many times to read the video stream in sequence.
+Specifies how many times to read the stream in sequence.
 If the value is less than 1, the stream will be read again and again.
 Default value is "1".
 
@@ -3674,6 +3682,10 @@ movie=in.avi:seek_point=3.2, scale=180:-1, setpts=PTS-STARTPTS [movie];
 movie=/dev/video0:f=video4linux2, scale=180:-1, setpts=PTS-STARTPTS [movie];
 [in] setpts=PTS-STARTPTS, [movie] overlay=16:16 [out]
 
+# read the first video stream and the audio stream with id 0x81 from
+# dvd.vob; the video is connected to the pad named "video" and the audio is
+# connected to the pad named "audio":
+movie=dvd.vob:s=v:0+#0x81 [video] [audio]
 @end example
 
 @section mptestsrc
@@ -3983,10 +3995,85 @@ tools.
 
 @c man end VIDEO SINKS
 
-@chapter Transmedia Filters
-@c man begin TRANSMEDIA FILTERS
+@chapter Multimedia Filters
+@c man begin MULTIMEDIA FILTERS
 
-Below is a description of the currently available transmedia filters.
+Below is a description of the currently available multimedia filters.
+
+@section concat
+
+Concatenate audio and video streams, joining them together one after the
+other.
+
+The filter works on segments of synchronized video and audio streams. All
+segments must have the same number of streams of each type, and that will
+also be the number of streams at output.
+
+The filter accepts the following named parameters:
+@table @option
+
+@item n
+Set the number of segments. Default is 2.
+
+@item v
+Set the number of output video streams, that is also the number of video
+streams in each segment. Default is 1.
+
+@item a
+Set the number of output audio streams, that is also the number of video
+streams in each segment. Default is 0.
+
+@end table
+
+The filter has @var{v}+@var{a} outputs: first @var{v} video outputs, then
+@var{a} audio outputs.
+
+There are @var{n}×(@var{v}+@var{a}) inputs: first the inputs for the first
+segment, in the same order as the outputs, then the inputs for the second
+segment, etc.
+
+Related streams do not always have exactly the same duration, for various
+reasons including codec frame size or sloppy authoring. For that reason,
+related synchronized streams (e.g. a video and its audio track) should be
+concatenated at once. The concat filter will use the duration of the longest
+stream in each segment (except the last one), and if necessary pad shorter
+audio streams with silence.
+
+For this filter to work correctly, all segments must start at timestamp 0.
+
+All corresponding streams must have the same parameters in all segments; the
+filtering system will automatically select a common pixel format for video
+streams, and a common sample format, sample rate and channel layout for
+audio streams, but other settings, such as resolution, must be converted
+explicitly by the user.
+
+Different frame rates are acceptable but will result in variable frame rate
+at output; be sure to configure the output file to handle it.
+
+Examples:
+@itemize
+@item
+Concatenate an opening, an episode and an ending, all in bilingual version
+(video in stream 0, audio in streams 1 and 2):
+@example
+ffmpeg -i opening.mkv -i episode.mkv -i ending.mkv -filter_complex \
+  '[0:0] [0:1] [0:2] [1:0] [1:1] [1:2] [2:0] [2:1] [2:2]
+   concat=n=3:v=1:a=2 [v] [a1] [a2]' \
+  -map '[v]' -map '[a1]' -map '[a2]' output.mkv
+@end example
+
+@item
+Concatenate two parts, handling audio and video separately, using the
+(a)movie sources, and adjusting the resolution:
+@example
+movie=part1.mp4, scale=512:288 [v1] ; amovie=part1.mp4 [a1] ;
+movie=part2.mp4, scale=512:288 [v2] ; amovie=part2.mp4 [a2] ;
+[v1] [v2] concat [outv] ; [a1] [a2] concat=v=0:a=1 [outa]
+@end example
+Note that a desync will happen at the stitch if the audio and video streams
+do not have exactly the same duration in the first file.
+
+@end itemize
 
 @section showwaves
 
@@ -4026,4 +4113,4 @@ aevalsrc=sin(1*2*PI*t)*sin(880*2*PI*t):cos(2*PI*200*t),asplit[out0],showwaves=r=
 @end example
 @end itemize
 
-@c man end TRANSMEDIA FILTERS
+@c man end MULTIMEDIA FILTERS

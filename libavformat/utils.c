@@ -942,10 +942,6 @@ static void update_initial_durations(AVFormatContext *s, AVStream *st,
     AVPacketList *pktl= s->parse_queue ? s->parse_queue : s->packet_buffer;
     int64_t cur_dts= RELATIVE_TS_BASE;
 
-    if (st->skip_samples && st->codec->sample_rate && st->time_base.num)
-        cur_dts -= av_rescale_q(st->skip_samples,
-                                (AVRational){ 1, st->codec->sample_rate },
-                                st->time_base);
     if(st->first_dts != AV_NOPTS_VALUE){
         cur_dts= st->first_dts;
         for(; pktl; pktl= get_next_pkt(s, st, pktl)){
@@ -1188,6 +1184,7 @@ static int parse_packet(AVFormatContext *s, AVPacket *pkt, int stream_index)
                                pkt->pts, pkt->dts, pkt->pos);
 
         pkt->pts = pkt->dts = AV_NOPTS_VALUE;
+        pkt->pos = -1;
         /* increment read pointer */
         data += len;
         size -= len;
@@ -1218,6 +1215,9 @@ static int parse_packet(AVFormatContext *s, AVPacket *pkt, int stream_index)
         out_pkt.pts = st->parser->pts;
         out_pkt.dts = st->parser->dts;
         out_pkt.pos = st->parser->pos;
+
+        if(st->need_parsing == AVSTREAM_PARSE_FULL_RAW)
+            out_pkt.pos = st->parser->frame_offset;
 
         if (st->parser->key_frame == 1 ||
             (st->parser->key_frame == -1 &&
@@ -1386,6 +1386,7 @@ int av_read_frame(AVFormatContext *s, AVPacket *pkt)
     const int genpts = s->flags & AVFMT_FLAG_GENPTS;
     int          eof = 0;
     int ret;
+    AVStream *st;
 
     if (!genpts) {
         ret = s->packet_buffer ? read_from_packet_buffer(&s->packet_buffer,
@@ -1455,11 +1456,12 @@ int av_read_frame(AVFormatContext *s, AVPacket *pkt)
 
 return_packet:
 
-    if(s->streams[pkt->stream_index]->skip_samples) {
+    st = s->streams[pkt->stream_index];
+    if (st->skip_samples) {
         uint8_t *p = av_packet_new_side_data(pkt, AV_PKT_DATA_SKIP_SAMPLES, 10);
-        AV_WL32(p, s->streams[pkt->stream_index]->skip_samples);
-        av_log(s, AV_LOG_DEBUG, "demuxer injecting skip %d\n", s->streams[pkt->stream_index]->skip_samples);
-        s->streams[pkt->stream_index]->skip_samples = 0;
+        AV_WL32(p, st->skip_samples);
+        av_log(s, AV_LOG_DEBUG, "demuxer injecting skip %d\n", st->skip_samples);
+        st->skip_samples = 0;
     }
 
     if (is_relative(pkt->dts))
@@ -2492,7 +2494,7 @@ int avformat_find_stream_info(AVFormatContext *ic, AVDictionary **options)
     AVPacket pkt1, *pkt;
     int64_t old_offset = avio_tell(ic->pb);
     int orig_nb_streams = ic->nb_streams;        // new streams might appear, no options for those
-    int flush_codecs = 1;
+    int flush_codecs = ic->probesize > 0;
 
     if(ic->pb)
         av_log(ic, AV_LOG_DEBUG, "File position before avformat_find_stream_info() is %"PRId64"\n", avio_tell(ic->pb));
@@ -2818,6 +2820,7 @@ int avformat_find_stream_info(AVFormatContext *ic, AVDictionary **options)
         }
     }
 
+    if(ic->probesize)
     estimate_timings(ic, old_offset);
 
     compute_chapters_end(ic);
@@ -4076,7 +4079,7 @@ void av_url_split(char *proto, int proto_size,
                   char *path, int path_size,
                   const char *url)
 {
-    const char *p, *ls, *at, *col, *brk;
+    const char *p, *ls, *ls2, *at, *col, *brk;
 
     if (port_ptr)               *port_ptr = -1;
     if (proto_size > 0)         proto[0] = 0;
@@ -4098,8 +4101,11 @@ void av_url_split(char *proto, int proto_size,
 
     /* separate path from hostname */
     ls = strchr(p, '/');
+    ls2 = strchr(p, '?');
     if(!ls)
-        ls = strchr(p, '?');
+        ls = ls2;
+    else if (ls && ls2)
+        ls = FFMIN(ls, ls2);
     if(ls)
         av_strlcpy(path, ls, path_size);
     else
