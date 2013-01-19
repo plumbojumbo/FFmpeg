@@ -35,11 +35,13 @@
 #include <stddef.h>
 #include <stdio.h>
 
+#include "libavutil/channel_layout.h"
+#include "libavutil/libm.h"
 #include "avcodec.h"
 #include "get_bits.h"
 #include "dsputil.h"
 #include "fft.h"
-#include "libavutil/audioconvert.h"
+#include "internal.h"
 #include "sinewin.h"
 
 #include "imcdata.h"
@@ -92,7 +94,6 @@ typedef struct {
 
     float sqrt_tab[30];
     GetBitContext gb;
-    float one_div_log2;
 
     DSPContext dsp;
     FFTContext fft;
@@ -176,8 +177,10 @@ static av_cold int imc_decode_init(AVCodecContext *avctx)
     IMCContext *q = avctx->priv_data;
     double r1, r2;
 
-    if ((avctx->codec_id == CODEC_ID_IMC && avctx->channels != 1)
-        || (avctx->codec_id == CODEC_ID_IAC && avctx->channels > 2)) {
+    if (avctx->codec_id == AV_CODEC_ID_IMC)
+        avctx->channels = 1;
+
+    if (avctx->channels > 2) {
         av_log_ask_for_sample(avctx, "Number of channels is not supported\n");
         return AVERROR_PATCHWELCOME;
     }
@@ -227,12 +230,8 @@ static av_cold int imc_decode_init(AVCodecContext *avctx)
                      imc_huffman_bits[i][j], 2, 2, INIT_VLC_USE_NEW_STATIC);
         }
     }
-    q->one_div_log2 = 1 / log(2);
 
-    if (avctx->codec_id == CODEC_ID_IAC) {
-    }
-
-    if (avctx->codec_id == CODEC_ID_IAC) {
+    if (avctx->codec_id == AV_CODEC_ID_IAC) {
         iac_generate_tabs(q, avctx->sample_rate);
     } else {
         memcpy(q->cyclTab,  cyclTab,  sizeof(cyclTab));
@@ -246,7 +245,7 @@ static av_cold int imc_decode_init(AVCodecContext *avctx)
         return ret;
     }
     ff_dsputil_init(&q->dsp, avctx);
-    avctx->sample_fmt     = AV_SAMPLE_FMT_FLT;
+    avctx->sample_fmt     = AV_SAMPLE_FMT_FLTP;
     avctx->channel_layout = avctx->channels == 1 ? AV_CH_LAYOUT_MONO
                                                  : AV_CH_LAYOUT_STEREO;
 
@@ -346,8 +345,8 @@ static void imc_decode_level_coefficients(IMCContext *q, int *levlCoeffBuf,
     float tmp, tmp2;
     // maybe some frequency division thingy
 
-    flcoeffs1[0] = 20000.0 / pow (2, levlCoeffBuf[0] * 0.18945); // 0.18945 = log2(10) * 0.05703125
-    flcoeffs2[0] = log(flcoeffs1[0]) / log(2);
+    flcoeffs1[0] = 20000.0 / exp2 (levlCoeffBuf[0] * 0.18945); // 0.18945 = log2(10) * 0.05703125
+    flcoeffs2[0] = log2f(flcoeffs1[0]);
     tmp  = flcoeffs1[0];
     tmp2 = flcoeffs2[0];
 
@@ -419,7 +418,7 @@ static int bit_allocation(IMCContext *q, IMCChannel *chctx,
         highest = FFMAX(highest, chctx->flcoeffs1[i]);
 
     for (i = 0; i < BANDS - 1; i++)
-        chctx->flcoeffs4[i] = chctx->flcoeffs3[i] - log(chctx->flcoeffs5[i]) / log(2);
+        chctx->flcoeffs4[i] = chctx->flcoeffs3[i] - log2f(chctx->flcoeffs5[i]);
     chctx->flcoeffs4[BANDS - 1] = limit;
 
     highest = highest * 0.25;
@@ -666,7 +665,7 @@ static void imc_imdct256(IMCContext *q, IMCChannel *chctx, int channels)
     int i;
     float re, im;
     float *dst1 = q->out_samples;
-    float *dst2 = q->out_samples + (COEFFS - 1) * channels;
+    float *dst2 = q->out_samples + (COEFFS - 1);
 
     /* prerotation */
     for (i = 0; i < COEFFS / 2; i++) {
@@ -688,8 +687,8 @@ static void imc_imdct256(IMCContext *q, IMCChannel *chctx, int channels)
                + (q->mdct_sine_window[i * 2] * re);
         *dst2 =  (q->mdct_sine_window[i * 2] * chctx->last_fft_im[i])
                - (q->mdct_sine_window[COEFFS - 1 - i * 2] * re);
-        dst1 += channels * 2;
-        dst2 -= channels * 2;
+        dst1 += 2;
+        dst2 -= 2;
         chctx->last_fft_im[i] = im;
     }
 }
@@ -747,7 +746,7 @@ static int imc_get_coeffs(IMCContext *q, IMCChannel *chctx)
                 cw = 0;
 
                 if (get_bits_count(&q->gb) + cw_len > 512) {
-                    // av_log(NULL, 0, "Band %i coeff %i cw_len %i\n", i, j, cw_len);
+                    av_dlog(NULL, "Band %i coeff %i cw_len %i\n", i, j, cw_len);
                     return AVERROR_INVALIDDATA;
                 }
 
@@ -786,13 +785,10 @@ static int imc_decode_block(AVCodecContext *avctx, IMCContext *q, int ch)
         return AVERROR_PATCHWELCOME;
     }
 
-//    av_log(avctx, AV_LOG_DEBUG, "stream_format_code = %d\n", stream_format_code);
-
     if (stream_format_code & 0x04)
         chctx->decoder_reset = 1;
 
     if (chctx->decoder_reset) {
-        memset(q->out_samples, 0, sizeof(q->out_samples));
         for (i = 0; i < BANDS; i++)
             chctx->old_floor[i] = 1.0;
         for (i = 0; i < COEFFS; i++)
@@ -809,6 +805,13 @@ static int imc_decode_block(AVCodecContext *avctx, IMCContext *q, int ch)
     else
         imc_decode_level_coefficients2(q, chctx->levlCoeffBuf, chctx->old_floor,
                                        chctx->flcoeffs1, chctx->flcoeffs2);
+
+    for(i=0; i<BANDS; i++) {
+        if(chctx->flcoeffs1[i] > INT_MAX) {
+            av_log(avctx, AV_LOG_ERROR, "scalefactor out of range\n");
+            return AVERROR_INVALIDDATA;
+        }
+    }
 
     memcpy(chctx->old_floor, chctx->flcoeffs1, 32 * sizeof(float));
 
@@ -846,7 +849,7 @@ static int imc_decode_block(AVCodecContext *avctx, IMCContext *q, int ch)
             }
         }
     }
-    if (avctx->codec_id == CODEC_ID_IAC) {
+    if (avctx->codec_id == AV_CODEC_ID_IAC) {
         bitscount += !!chctx->bandWidthT[BANDS - 1];
         if (!(stream_format_code & 0x2))
             bitscount += 16;
@@ -945,13 +948,13 @@ static int imc_decode_frame(AVCodecContext *avctx, void *data,
 
     /* get output buffer */
     q->frame.nb_samples = COEFFS;
-    if ((ret = avctx->get_buffer(avctx, &q->frame)) < 0) {
+    if ((ret = ff_get_buffer(avctx, &q->frame)) < 0) {
         av_log(avctx, AV_LOG_ERROR, "get_buffer() failed\n");
         return ret;
     }
 
     for (i = 0; i < avctx->channels; i++) {
-        q->out_samples = (float*)q->frame.data[0] + i;
+        q->out_samples = (float *)q->frame.extended_data[i];
 
         q->dsp.bswap16_buf(buf16, (const uint16_t*)buf, IMC_BLOCK_SIZE / 2);
 
@@ -964,15 +967,8 @@ static int imc_decode_frame(AVCodecContext *avctx, void *data,
     }
 
     if (avctx->channels == 2) {
-        float *src = (float*)q->frame.data[0], t1, t2;
-
-        for (i = 0; i < COEFFS; i++) {
-            t1     = src[0];
-            t2     = src[1];
-            src[0] = t1 + t2;
-            src[1] = t1 - t2;
-            src   += 2;
-        }
+        q->dsp.butterflies_float((float *)q->frame.extended_data[0],
+                                 (float *)q->frame.extended_data[1], COEFFS);
     }
 
     *got_frame_ptr   = 1;
@@ -991,29 +987,43 @@ static av_cold int imc_decode_close(AVCodecContext * avctx)
     return 0;
 }
 
+static av_cold void flush(AVCodecContext *avctx)
+{
+    IMCContext *q = avctx->priv_data;
+
+    q->chctx[0].decoder_reset =
+    q->chctx[1].decoder_reset = 1;
+}
+
 #if CONFIG_IMC_DECODER
 AVCodec ff_imc_decoder = {
     .name           = "imc",
     .type           = AVMEDIA_TYPE_AUDIO,
-    .id             = CODEC_ID_IMC,
+    .id             = AV_CODEC_ID_IMC,
     .priv_data_size = sizeof(IMCContext),
     .init           = imc_decode_init,
     .close          = imc_decode_close,
     .decode         = imc_decode_frame,
+    .flush          = flush,
     .capabilities   = CODEC_CAP_DR1,
     .long_name      = NULL_IF_CONFIG_SMALL("IMC (Intel Music Coder)"),
+    .sample_fmts    = (const enum AVSampleFormat[]) { AV_SAMPLE_FMT_FLTP,
+                                                      AV_SAMPLE_FMT_NONE },
 };
 #endif
 #if CONFIG_IAC_DECODER
 AVCodec ff_iac_decoder = {
     .name           = "iac",
     .type           = AVMEDIA_TYPE_AUDIO,
-    .id             = CODEC_ID_IAC,
+    .id             = AV_CODEC_ID_IAC,
     .priv_data_size = sizeof(IMCContext),
     .init           = imc_decode_init,
     .close          = imc_decode_close,
     .decode         = imc_decode_frame,
+    .flush          = flush,
     .capabilities   = CODEC_CAP_DR1,
     .long_name      = NULL_IF_CONFIG_SMALL("IAC (Indeo Audio Coder)"),
+    .sample_fmts    = (const enum AVSampleFormat[]) { AV_SAMPLE_FMT_FLTP,
+                                                      AV_SAMPLE_FMT_NONE },
 };
 #endif

@@ -47,6 +47,19 @@ void ff_amf_write_string(uint8_t **dst, const char *str)
     bytestream_put_buffer(dst, str, strlen(str));
 }
 
+void ff_amf_write_string2(uint8_t **dst, const char *str1, const char *str2)
+{
+    int len1 = 0, len2 = 0;
+    if (str1)
+        len1 = strlen(str1);
+    if (str2)
+        len2 = strlen(str2);
+    bytestream_put_byte(dst, AMF_DATA_TYPE_STRING);
+    bytestream_put_be16(dst, len1 + len2);
+    bytestream_put_buffer(dst, str1, len1);
+    bytestream_put_buffer(dst, str2, len2);
+}
+
 void ff_amf_write_null(uint8_t **dst)
 {
     bytestream_put_byte(dst, AMF_DATA_TYPE_NULL);
@@ -69,6 +82,51 @@ void ff_amf_write_object_end(uint8_t **dst)
      * AMF object should end with it and end marker
      */
     bytestream_put_be24(dst, AMF_DATA_TYPE_OBJECT_END);
+}
+
+int ff_amf_read_bool(GetByteContext *bc, int *val)
+{
+    if (bytestream2_get_byte(bc) != AMF_DATA_TYPE_BOOL)
+        return AVERROR_INVALIDDATA;
+    *val = bytestream2_get_byte(bc);
+    return 0;
+}
+
+int ff_amf_read_number(GetByteContext *bc, double *val)
+{
+    uint64_t read;
+    if (bytestream2_get_byte(bc) != AMF_DATA_TYPE_NUMBER)
+        return AVERROR_INVALIDDATA;
+    read = bytestream2_get_be64(bc);
+    *val = av_int2double(read);
+    return 0;
+}
+
+int ff_amf_read_string(GetByteContext *bc, uint8_t *str,
+                       int strsize, int *length)
+{
+    int stringlen = 0;
+    int readsize;
+    if (bytestream2_get_byte(bc) != AMF_DATA_TYPE_STRING)
+        return AVERROR_INVALIDDATA;
+    stringlen = bytestream2_get_be16(bc);
+    if (stringlen + 1 > strsize)
+        return AVERROR(EINVAL);
+    readsize = bytestream2_get_buffer(bc, str, stringlen);
+    if (readsize != stringlen) {
+        av_log(NULL, AV_LOG_WARNING,
+               "Unable to read as many bytes as AMF string signaled\n");
+    }
+    str[readsize] = '\0';
+    *length = FFMIN(stringlen, readsize);
+    return 0;
+}
+
+int ff_amf_read_null(GetByteContext *bc)
+{
+    if (bytestream2_get_byte(bc) != AMF_DATA_TYPE_NULL)
+        return AVERROR_INVALIDDATA;
+    return 0;
 }
 
 int ff_rtmp_packet_read(URLContext *h, RTMPPacket *p,

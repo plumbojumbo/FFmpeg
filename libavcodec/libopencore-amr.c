@@ -19,23 +19,30 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include "avcodec.h"
 #include "libavutil/avstring.h"
+#include "libavutil/channel_layout.h"
+#include "libavutil/common.h"
 #include "libavutil/opt.h"
+#include "avcodec.h"
 #include "audio_frame_queue.h"
 #include "internal.h"
 
-static void amr_decode_fix_avctx(AVCodecContext *avctx)
+static int amr_decode_fix_avctx(AVCodecContext *avctx)
 {
-    const int is_amr_wb = 1 + (avctx->codec_id == CODEC_ID_AMR_WB);
+    const int is_amr_wb = 1 + (avctx->codec_id == AV_CODEC_ID_AMR_WB);
 
     if (!avctx->sample_rate)
         avctx->sample_rate = 8000 * is_amr_wb;
 
-    if (!avctx->channels)
-        avctx->channels = 1;
+    if (avctx->channels > 1) {
+        av_log_missing_feature(avctx, "multi-channel AMR", 0);
+        return AVERROR_PATCHWELCOME;
+    }
 
-    avctx->sample_fmt = AV_SAMPLE_FMT_S16;
+    avctx->channels       = 1;
+    avctx->channel_layout = AV_CH_LAYOUT_MONO;
+    avctx->sample_fmt     = AV_SAMPLE_FMT_S16;
+    return 0;
 }
 
 #if CONFIG_LIBOPENCORE_AMRNB
@@ -91,7 +98,7 @@ typedef struct AMRContext {
 } AMRContext;
 
 static const AVOption options[] = {
-    { "dtx", "Allow DTX (generate comfort noise)", offsetof(AMRContext, enc_dtx), AV_OPT_TYPE_INT, { 0 }, 0, 1, AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_ENCODING_PARAM },
+    { "dtx", "Allow DTX (generate comfort noise)", offsetof(AMRContext, enc_dtx), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1, AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_ENCODING_PARAM },
     { NULL }
 };
 
@@ -102,18 +109,15 @@ static const AVClass class = {
 static av_cold int amr_nb_decode_init(AVCodecContext *avctx)
 {
     AMRContext *s  = avctx->priv_data;
+    int ret;
+
+    if ((ret = amr_decode_fix_avctx(avctx)) < 0)
+        return ret;
 
     s->dec_state   = Decoder_Interface_init();
     if (!s->dec_state) {
         av_log(avctx, AV_LOG_ERROR, "Decoder_Interface_init error\n");
         return -1;
-    }
-
-    amr_decode_fix_avctx(avctx);
-
-    if (avctx->channels > 1) {
-        av_log(avctx, AV_LOG_ERROR, "amr_nb: multichannel decoding not supported\n");
-        return AVERROR(ENOSYS);
     }
 
     avcodec_get_frame_defaults(&s->frame);
@@ -146,7 +150,7 @@ static int amr_nb_decode_frame(AVCodecContext *avctx, void *data,
 
     /* get output buffer */
     s->frame.nb_samples = 160;
-    if ((ret = avctx->get_buffer(avctx, &s->frame)) < 0) {
+    if ((ret = ff_get_buffer(avctx, &s->frame)) < 0) {
         av_log(avctx, AV_LOG_ERROR, "get_buffer() failed\n");
         return ret;
     }
@@ -174,20 +178,20 @@ static int amr_nb_decode_frame(AVCodecContext *avctx, void *data,
 AVCodec ff_libopencore_amrnb_decoder = {
     .name           = "libopencore_amrnb",
     .type           = AVMEDIA_TYPE_AUDIO,
-    .id             = CODEC_ID_AMR_NB,
+    .id             = AV_CODEC_ID_AMR_NB,
     .priv_data_size = sizeof(AMRContext),
     .init           = amr_nb_decode_init,
     .close          = amr_nb_decode_close,
     .decode         = amr_nb_decode_frame,
     .capabilities   = CODEC_CAP_DR1,
-    .long_name      = NULL_IF_CONFIG_SMALL("OpenCORE Adaptive Multi-Rate (AMR) Narrow-Band"),
+    .long_name      = NULL_IF_CONFIG_SMALL("OpenCORE AMR-NB (Adaptive Multi-Rate Narrow-Band)"),
 };
 
 static av_cold int amr_nb_encode_init(AVCodecContext *avctx)
 {
     AMRContext *s = avctx->priv_data;
 
-    if (avctx->sample_rate != 8000) {
+    if (avctx->sample_rate != 8000 && avctx->strict_std_compliance > FF_COMPLIANCE_UNOFFICIAL) {
         av_log(avctx, AV_LOG_ERROR, "Only 8000Hz sample rate supported\n");
         return AVERROR(ENOSYS);
     }
@@ -257,7 +261,7 @@ static int amr_nb_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
             if (frame->nb_samples < avctx->frame_size - avctx->delay)
                 s->enc_last_frame = -1;
         }
-        if ((ret = ff_af_queue_add(&s->afq, frame) < 0)) {
+        if ((ret = ff_af_queue_add(&s->afq, frame)) < 0) {
             av_freep(&flush_buf);
             return ret;
         }
@@ -274,7 +278,7 @@ static int amr_nb_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
     written = Encoder_Interface_Encode(s->enc_state, s->enc_mode, samples,
                                        avpkt->data, 0);
     av_dlog(avctx, "amr_nb_encode_frame encoded %u bytes, bitrate %u, first byte was %#02x\n",
-            written, s->enc_mode, frame[0]);
+            written, s->enc_mode, avpkt->data[0]);
 
     /* Get the next frame pts/duration */
     ff_af_queue_remove(&s->afq, avctx->frame_size, &avpkt->pts,
@@ -289,7 +293,7 @@ static int amr_nb_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
 AVCodec ff_libopencore_amrnb_encoder = {
     .name           = "libopencore_amrnb",
     .type           = AVMEDIA_TYPE_AUDIO,
-    .id             = CODEC_ID_AMR_NB,
+    .id             = AV_CODEC_ID_AMR_NB,
     .priv_data_size = sizeof(AMRContext),
     .init           = amr_nb_encode_init,
     .encode2        = amr_nb_encode_frame,
@@ -297,7 +301,7 @@ AVCodec ff_libopencore_amrnb_encoder = {
     .capabilities   = CODEC_CAP_DELAY | CODEC_CAP_SMALL_LAST_FRAME,
     .sample_fmts    = (const enum AVSampleFormat[]){ AV_SAMPLE_FMT_S16,
                                                      AV_SAMPLE_FMT_NONE },
-    .long_name      = NULL_IF_CONFIG_SMALL("OpenCORE Adaptive Multi-Rate (AMR) Narrow-Band"),
+    .long_name      = NULL_IF_CONFIG_SMALL("OpenCORE AMR-NB (Adaptive Multi-Rate Narrow-Band)"),
     .priv_class     = &class,
 };
 
@@ -317,15 +321,12 @@ typedef struct AMRWBContext {
 static av_cold int amr_wb_decode_init(AVCodecContext *avctx)
 {
     AMRWBContext *s = avctx->priv_data;
+    int ret;
+
+    if ((ret = amr_decode_fix_avctx(avctx)) < 0)
+        return ret;
 
     s->state        = D_IF_init();
-
-    amr_decode_fix_avctx(avctx);
-
-    if (avctx->channels > 1) {
-        av_log(avctx, AV_LOG_ERROR, "amr_wb: multichannel decoding not supported\n");
-        return AVERROR(ENOSYS);
-    }
 
     avcodec_get_frame_defaults(&s->frame);
     avctx->coded_frame = &s->frame;
@@ -345,7 +346,7 @@ static int amr_wb_decode_frame(AVCodecContext *avctx, void *data,
 
     /* get output buffer */
     s->frame.nb_samples = 320;
-    if ((ret = avctx->get_buffer(avctx, &s->frame)) < 0) {
+    if ((ret = ff_get_buffer(avctx, &s->frame)) < 0) {
         av_log(avctx, AV_LOG_ERROR, "get_buffer() failed\n");
         return ret;
     }
@@ -356,6 +357,10 @@ static int amr_wb_decode_frame(AVCodecContext *avctx, void *data,
     if (packet_size > buf_size) {
         av_log(avctx, AV_LOG_ERROR, "amr frame too short (%u, should be %u)\n",
                buf_size, packet_size + 1);
+        return AVERROR_INVALIDDATA;
+    }
+    if (!packet_size) {
+        av_log(avctx, AV_LOG_ERROR, "amr packet_size invalid\n");
         return AVERROR_INVALIDDATA;
     }
 
@@ -378,13 +383,13 @@ static int amr_wb_decode_close(AVCodecContext *avctx)
 AVCodec ff_libopencore_amrwb_decoder = {
     .name           = "libopencore_amrwb",
     .type           = AVMEDIA_TYPE_AUDIO,
-    .id             = CODEC_ID_AMR_WB,
+    .id             = AV_CODEC_ID_AMR_WB,
     .priv_data_size = sizeof(AMRWBContext),
     .init           = amr_wb_decode_init,
     .close          = amr_wb_decode_close,
     .decode         = amr_wb_decode_frame,
     .capabilities   = CODEC_CAP_DR1,
-    .long_name      = NULL_IF_CONFIG_SMALL("OpenCORE Adaptive Multi-Rate (AMR) Wide-Band"),
+    .long_name      = NULL_IF_CONFIG_SMALL("OpenCORE AMR-WB (Adaptive Multi-Rate Wide-Band)"),
 };
 
 #endif /* CONFIG_LIBOPENCORE_AMRWB */

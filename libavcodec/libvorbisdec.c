@@ -22,6 +22,7 @@
 
 #include "avcodec.h"
 #include "bytestream.h"
+#include "internal.h"
 
 typedef struct OggVorbisDecContext {
     AVFrame frame;
@@ -48,7 +49,7 @@ static int oggvorbis_decode_init(AVCodecContext *avccontext) {
 
     if(p[0] == 0 && p[1] == 30) {
         for(i = 0; i < 3; i++){
-            hsizes[i] = bytestream_get_be16(&p);
+            hsizes[i] = bytestream_get_be16((const uint8_t **)&p);
             headers[i] = p;
             p += hsizes[i];
         }
@@ -141,7 +142,7 @@ static int oggvorbis_decode_frame(AVCodecContext *avccontext, void *data,
     }
 
     context->frame.nb_samples = 8192*4;
-    if ((ret = avccontext->get_buffer(avccontext, &context->frame)) < 0) {
+    if ((ret = ff_get_buffer(avccontext, &context->frame)) < 0) {
         av_log(avccontext, AV_LOG_ERROR, "get_buffer() failed\n");
         return ret;
     }
@@ -190,7 +191,7 @@ static int oggvorbis_decode_close(AVCodecContext *avccontext) {
 AVCodec ff_libvorbis_decoder = {
     .name           = "libvorbis",
     .type           = AVMEDIA_TYPE_AUDIO,
-    .id             = CODEC_ID_VORBIS,
+    .id             = AV_CODEC_ID_VORBIS,
     .priv_data_size = sizeof(OggVorbisDecContext),
     .init           = oggvorbis_decode_init,
     .decode         = oggvorbis_decode_frame,

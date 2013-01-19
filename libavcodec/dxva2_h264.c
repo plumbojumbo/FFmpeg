@@ -293,7 +293,7 @@ static int commit_bitstream_and_slice_buffer(AVCodecContext *avctx,
     /* Create an annex B bitstream buffer with only slice NAL and finalize slice */
     if (FAILED(IDirectXVideoDecoder_GetBuffer(ctx->decoder,
                                                DXVA2_BitStreamDateBufferType,
-                                               &dxva_data, &dxva_size)))
+                                               (void **)&dxva_data, &dxva_size)))
         return -1;
     current = dxva_data;
     end = dxva_data + dxva_size;
@@ -442,8 +442,8 @@ static int end_frame(AVCodecContext *avctx)
 AVHWAccel ff_h264_dxva2_hwaccel = {
     .name           = "h264_dxva2",
     .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = CODEC_ID_H264,
-    .pix_fmt        = PIX_FMT_DXVA2_VLD,
+    .id             = AV_CODEC_ID_H264,
+    .pix_fmt        = AV_PIX_FMT_DXVA2_VLD,
     .start_frame    = start_frame,
     .decode_slice   = decode_slice,
     .end_frame      = end_frame,

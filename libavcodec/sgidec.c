@@ -23,6 +23,7 @@
 #include "libavutil/avassert.h"
 #include "avcodec.h"
 #include "bytestream.h"
+#include "internal.h"
 #include "sgi.h"
 
 typedef struct SgiState {
@@ -49,12 +50,12 @@ static int expand_rle_row(SgiState *s, uint8_t *out_buf,
     unsigned char pixel, count;
     unsigned char *orig = out_buf;
 
-    while (1) {
+    while (out_buf < out_end) {
         if (bytestream2_get_bytes_left(&s->g) < 1)
             return AVERROR_INVALIDDATA;
         pixel = bytestream2_get_byteu(&s->g);
         if (!(count = (pixel & 0x7f))) {
-            return (out_buf - orig) / pixelstride;
+            break;
         }
 
         /* Check for buffer overflow. */
@@ -74,6 +75,7 @@ static int expand_rle_row(SgiState *s, uint8_t *out_buf,
             }
         }
     }
+    return (out_buf - orig) / pixelstride;
 }
 
 /**
@@ -101,7 +103,7 @@ static int read_rle_sgi(uint8_t *out_buf, SgiState *s)
             dest_row -= s->linesize;
             start_offset = bytestream2_get_be32(&g_table);
             bytestream2_seek(&s->g, start_offset, SEEK_SET);
-            if (expand_rle_row(s, dest_row + z, dest_row + FFABS(s->linesize),
+            if (expand_rle_row(s, dest_row + z, dest_row + s->width*s->depth,
                                s->depth) != s->width) {
                 return AVERROR_INVALIDDATA;
             }
@@ -150,7 +152,7 @@ static int read_uncompressed_sgi(unsigned char* out_buf, SgiState *s)
 }
 
 static int decode_frame(AVCodecContext *avctx,
-                        void *data, int *data_size,
+                        void *data, int *got_frame,
                         AVPacket *avpkt)
 {
     SgiState *s = avctx->priv_data;
@@ -191,11 +193,11 @@ static int decode_frame(AVCodecContext *avctx,
     }
 
     if (s->depth == SGI_GRAYSCALE) {
-        avctx->pix_fmt = s->bytes_per_channel == 2 ? PIX_FMT_GRAY16BE : PIX_FMT_GRAY8;
+        avctx->pix_fmt = s->bytes_per_channel == 2 ? AV_PIX_FMT_GRAY16BE : AV_PIX_FMT_GRAY8;
     } else if (s->depth == SGI_RGB) {
-        avctx->pix_fmt = s->bytes_per_channel == 2 ? PIX_FMT_RGB48BE : PIX_FMT_RGB24;
+        avctx->pix_fmt = s->bytes_per_channel == 2 ? AV_PIX_FMT_RGB48BE : AV_PIX_FMT_RGB24;
     } else if (s->depth == SGI_RGBA) {
-        avctx->pix_fmt = s->bytes_per_channel == 2 ? PIX_FMT_RGBA64BE : PIX_FMT_RGBA;
+        avctx->pix_fmt = s->bytes_per_channel == 2 ? AV_PIX_FMT_RGBA64BE : AV_PIX_FMT_RGBA;
     } else {
         av_log(avctx, AV_LOG_ERROR, "wrong picture format\n");
         return -1;
@@ -209,7 +211,7 @@ static int decode_frame(AVCodecContext *avctx,
         avctx->release_buffer(avctx, p);
 
     p->reference = 0;
-    if (avctx->get_buffer(avctx, p) < 0) {
+    if (ff_get_buffer(avctx, p) < 0) {
         av_log(avctx, AV_LOG_ERROR, "get_buffer() failed.\n");
         return -1;
     }
@@ -232,7 +234,7 @@ static int decode_frame(AVCodecContext *avctx,
 
     if (ret == 0) {
         *picture   = s->picture;
-        *data_size = sizeof(AVPicture);
+        *got_frame = 1;
         return avpkt->size;
     } else {
         return ret;
@@ -261,11 +263,11 @@ static av_cold int sgi_end(AVCodecContext *avctx)
 AVCodec ff_sgi_decoder = {
     .name           = "sgi",
     .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = CODEC_ID_SGI,
+    .id             = AV_CODEC_ID_SGI,
     .priv_data_size = sizeof(SgiState),
     .init           = sgi_init,
     .close          = sgi_end,
     .decode         = decode_frame,
-    .capabilities   = CODEC_CAP_DR1,
     .long_name      = NULL_IF_CONFIG_SMALL("SGI image"),
+    .capabilities   = CODEC_CAP_DR1,
 };

@@ -34,6 +34,8 @@
 #include <pthread.h>
 #elif HAVE_W32THREADS
 #include "w32pthreads.h"
+#elif HAVE_OS2THREADS
+#include "os2threads.h"
 #endif
 
 #define VP8_MAX_QUANT 127
@@ -72,13 +74,13 @@ enum inter_splitmvmode {
     VP8_SPLITMVMODE_NONE,        ///< (only used in prediction) no split MVs
 };
 
-typedef struct {
+typedef struct VP8FilterStrength {
     uint8_t filter_level;
     uint8_t inner_limit;
     uint8_t inner_filter;
 } VP8FilterStrength;
 
-typedef struct {
+typedef struct VP8Macroblock {
     uint8_t skip;
     // todo: make it possible to check for at least (i4x4 or split_mv)
     // in one op. are others needed?
@@ -93,22 +95,9 @@ typedef struct {
     VP56mv bmv[16];
 } VP8Macroblock;
 
-typedef struct {
-#if HAVE_THREADS
-    pthread_mutex_t lock;
-    pthread_cond_t  cond;
-#endif
-    int thread_nr;
-    int thread_mb_pos; // (mb_y << 16) | (mb_x & 0xFFFF)
-    int wait_mb_pos; // What the current thread is waiting on.
-    uint8_t *edge_emu_buffer;
-    /**
-     * For coeff decode, we need to know whether the above block had non-zero
-     * coefficients. This means for each macroblock, we need data for 4 luma
-     * blocks, 2 u blocks, 2 v blocks, and the luma dc block, for a total of 9
-     * per macroblock. We keep the last row in top_nnz.
-     */
-    DECLARE_ALIGNED(8, uint8_t, left_nnz)[9];
+typedef struct VP8ThreadData {
+    DECLARE_ALIGNED(16, DCTELEM, block)[6][4][16];
+    DECLARE_ALIGNED(16, DCTELEM, block_dc)[16];
     /**
      * This is the index plus one of the last non-zero coeff
      * for each of the blocks in the current macroblock.
@@ -117,13 +106,26 @@ typedef struct {
      *     2+-> full transform
      */
     DECLARE_ALIGNED(16, uint8_t, non_zero_count_cache)[6][4];
-    DECLARE_ALIGNED(16, DCTELEM, block)[6][4][16];
-    DECLARE_ALIGNED(16, DCTELEM, block_dc)[16];
+    /**
+     * For coeff decode, we need to know whether the above block had non-zero
+     * coefficients. This means for each macroblock, we need data for 4 luma
+     * blocks, 2 u blocks, 2 v blocks, and the luma dc block, for a total of 9
+     * per macroblock. We keep the last row in top_nnz.
+     */
+    DECLARE_ALIGNED(8, uint8_t, left_nnz)[9];
+    int thread_nr;
+#if HAVE_THREADS
+    pthread_mutex_t lock;
+    pthread_cond_t  cond;
+#endif
+    int thread_mb_pos; // (mb_y << 16) | (mb_x & 0xFFFF)
+    int wait_mb_pos; // What the current thread is waiting on.
+    uint8_t *edge_emu_buffer;
     VP8FilterStrength *filter_strength;
 } VP8ThreadData;
 
 #define MAX_THREADS 8
-typedef struct {
+typedef struct VP8Context {
     VP8ThreadData *thread_data;
     AVCodecContext *avctx;
     AVFrame *framep[4];
@@ -247,7 +249,7 @@ typedef struct {
      */
     int num_coeff_partitions;
     VP56RangeCoder coeff_partition[8];
-    DSPContext dsp;
+    VideoDSPContext vdsp;
     VP8DSPContext vp8dsp;
     H264PredContext hpc;
     vp8_mc_func put_pixels_tab[3][3][3];
