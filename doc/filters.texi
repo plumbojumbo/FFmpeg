@@ -282,6 +282,83 @@ aconvert=u8:auto
 @end example
 @end itemize
 
+@section afade
+
+Apply fade-in/out effect to input audio.
+
+The filter accepts parameters as a list of @var{key}=@var{value}
+pairs, separated by ":".
+
+A description of the accepted parameters follows.
+
+@table @option
+@item type, t
+Specify the effect type, can be either @code{in} for fade-in, or
+@code{out} for a fade-out effect. Default is @code{in}.
+
+@item start_sample, ss
+Specify the number of the start sample for starting to apply the fade
+effect. Default is 0.
+
+@item nb_samples, ns
+Specify the number of samples for which the fade effect has to last. At
+the end of the fade-in effect the output audio will have the same
+volume as the input audio, at the end of the fade-out transition
+the output audio will be silence. Default is 44100.
+
+@item start_time, st
+Specify time in seconds for starting to apply the fade
+effect. Default is 0.
+If set this option is used instead of @var{start_sample} one.
+
+@item duration, d
+Specify the number of seconds for which the fade effect has to last. At
+the end of the fade-in effect the output audio will have the same
+volume as the input audio, at the end of the fade-out transition
+the output audio will be silence. Default is 0.
+If set this option is used instead of @var{nb_samples} one.
+
+@item curve
+Set cuve for fade transition.
+@table @option
+@item @var{triangular, linear slope (default)}
+@code{tri}
+@item @var{quarter of sine wave}
+@code{qsin}
+@item @var{half of sine wave}
+@code{esin}
+@item @var{exponential sine wave}
+@code{hsin}
+@item @var{logarithmic}
+@code{log}
+@item @var{inverted parabola}
+@code{par}
+@item @var{quadratic}
+@code{qua}
+@item @var{cubic}
+@code{cub}
+@item @var{square root}
+@code{squ}
+@item @var{cubic root}
+@code{cbr}
+@end table
+@end table
+
+@subsection Examples
+@itemize
+@item
+Fade in first 15 seconds of audio:
+@example
+afade=t=in:ss=0:d=15
+@end example
+
+@item
+Fade out last 25 seconds of a 900 seconds audio:
+@example
+afade=t=out:ss=875:d=25
+@end example
+@end itemize
+
 @section aformat
 
 Set output format constraints for the input audio. The framework will
@@ -718,7 +795,7 @@ ffmpeg -f lavfi -i amovie=silence.mp3,silencedetect=noise=0.0001 -f null -
 Synchronize audio data with timestamps by squeezing/stretching it and/or
 dropping samples/adding silence when needed.
 
-As an alternative, you can use @ref{aresample} to do squeezing/stretching.
+This filter is not built by default, please use @ref{aresample} to do squeezing/stretching.
 
 The filter accepts the following named parameters:
 @table @option
@@ -982,6 +1059,11 @@ The channel layout of the incoming audio buffers.
 Either a channel layout name from channel_layout_map in
 @file{libavutil/channel_layout.c} or its corresponding integer representation
 from the AV_CH_LAYOUT_* macros in @file{libavutil/channel_layout.h}
+
+@item channels
+The number of channels of the incoming audio buffers.
+If both @var{channels} and @var{channel_layout} are specified, then they
+must be consistent.
 
 @end table
 
@@ -1935,8 +2017,8 @@ See below for the list of accepted constants and functions.
 
 @item expansion
 Select how the @var{text} is expanded. Can be either @code{none},
-@code{strftime} (default for compatibity reasons but deprecated) or
-@code{normal}. See the @ref{drawtext_expansion, Text expansion} section
+@code{strftime} (deprecated) or
+@code{normal} (default). See the @ref{drawtext_expansion, Text expansion} section
 below for details.
 
 @item fix_bounds
@@ -2110,14 +2192,14 @@ If libavfilter was built with @code{--enable-fontconfig}, then
 @anchor{drawtext_expansion}
 @subsection Text expansion
 
-If @option{expansion} is set to @code{strftime} (which is the default for
-now), the filter recognizes strftime() sequences in the provided text and
+If @option{expansion} is set to @code{strftime},
+the filter recognizes strftime() sequences in the provided text and
 expands them accordingly. Check the documentation of strftime(). This
 feature is deprecated.
 
 If @option{expansion} is set to @code{none}, the text is printed verbatim.
 
-If @option{expansion} is set to @code{normal} (which will be the default),
+If @option{expansion} is set to @code{normal} (which is the default),
 the following expansion mechanism is used.
 
 The backslash character '\', followed by any character, always expands to
@@ -2234,7 +2316,7 @@ drawtext='fontfile=Linux Libertine O-40\:style=Semibold:text=FFmpeg'
 @item
 Print the date of a real-time encoding (see strftime(3)):
 @example
-drawtext='fontfile=FreeSans.ttf:expansion=normal:text=%@{localtime:%a %b %d %Y@}'
+drawtext='fontfile=FreeSans.ttf:text=%@{localtime:%a %b %d %Y@}'
 @end example
 
 @end itemize
@@ -5389,6 +5471,13 @@ previous output PTS
 
 @item PREV_OUTT
 previous output time in seconds
+
+@item RTCTIME
+wallclock (RTC) time in microseconds. This is deprecated, use time(0)
+instead.
+
+@item RTCSTART
+wallclock (RTC) time at the start of the movie in microseconds
 @end table
 
 @subsection Examples
@@ -5428,6 +5517,12 @@ setpts='1/(25*TB) * (N + 0.05 * sin(N*2*PI/25))'
 Apply an offset of 10 seconds to the input PTS:
 @example
 setpts=PTS+10/TB
+@end example
+
+@item
+Generate timestamps from a "live source" and rebase onto the current timebase:
+@example
+setpts='(RTCTIME - RTCSTART) / (TB * 1000000)'
 @end example
 @end itemize
 
@@ -5625,6 +5720,19 @@ Convert input audio to a video output, representing the samples waves.
 
 The filter accepts the following named parameters:
 @table @option
+@item mode
+Set display mode.
+
+Available values are:
+@table @samp
+@item point
+Draw a point for each sample.
+
+@item line
+Draw a vertical line for each sample.
+@end table
+
+Default value is @code{point}.
 
 @item n
 Set the number of samples which are printed on the same column. A

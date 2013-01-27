@@ -26,6 +26,7 @@
 #include "bytestream.h"
 #include "internal.h"
 #include "libavutil/bswap.h"
+#include "libavutil/imgutils.h"
 #include "libavcodec/dsputil.h"
 #include "sanm_data.h"
 
@@ -638,6 +639,11 @@ static int old_codec47(SANMVideoContext *ctx, int top,
     decoded_size = bytestream2_get_le32(&ctx->gb);
     bytestream2_skip(&ctx->gb, 8);
 
+    if (decoded_size > height * stride - left - top * stride) {
+        decoded_size = height * stride - left - top * stride;
+        av_log(ctx->avctx, AV_LOG_WARNING, "decoded size is too large\n");
+    }
+
     if (skip & 1)
         bytestream2_skip(&ctx->gb, 0x8080);
     if (!seq) {
@@ -651,8 +657,7 @@ static int old_codec47(SANMVideoContext *ctx, int top,
         if (bytestream2_get_bytes_left(&ctx->gb) < width * height)
             return AVERROR_INVALIDDATA;
         for (j = 0; j < height; j++) {
-            for (i = 0; i < width; i++)
-                bytestream2_get_bufferu(&ctx->gb, dst, width);
+            bytestream2_get_bufferu(&ctx->gb, dst, width);
             dst += stride;
         }
         break;
@@ -716,8 +721,11 @@ static int process_frame_obj(SANMVideoContext *ctx)
     h     = bytestream2_get_le16u(&ctx->gb);
 
     if (ctx->width < left + w || ctx->height < top + h) {
-        ctx->avctx->width  = FFMAX(left + w, ctx->width);
-        ctx->avctx->height = FFMAX(top + h, ctx->height);
+        if (av_image_check_size(FFMAX(left + w, ctx->width),
+                                FFMAX(top  + h, ctx->height), 0, ctx->avctx) < 0)
+            return AVERROR_INVALIDDATA;
+        avcodec_set_dimensions(ctx->avctx, FFMAX(left + w, ctx->width),
+                                           FFMAX(top  + h, ctx->height));
         init_sizes(ctx, left + w, top + h);
         if (init_buffers(ctx)) {
             av_log(ctx->avctx, AV_LOG_ERROR, "error resizing buffers\n");

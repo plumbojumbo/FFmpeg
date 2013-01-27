@@ -21,7 +21,7 @@
 /**
  * @file generic segmenter
  * M3U8 specification can be find here:
- * @url{http://tools.ietf.org/id/draft-pantos-http-live-streaming-08.txt}
+ * @url{http://tools.ietf.org/id/draft-pantos-http-live-streaming}
  */
 
 /* #define DEBUG */
@@ -230,12 +230,6 @@ static int segment_list_open(AVFormatContext *s)
     return ret;
 }
 
-static void segment_list_close(AVFormatContext *s)
-{
-    SegmentContext *seg = s->priv_data;
-    avio_close(seg->list_pb);
-}
-
 static void segment_list_print_entry(AVIOContext      *list_ioctx,
                                      ListType          list_type,
                                      const SegmentListEntry *list_entry)
@@ -258,7 +252,7 @@ static void segment_list_print_entry(AVIOContext      *list_ioctx,
     }
 }
 
-static int segment_end(AVFormatContext *s, int write_trailer)
+static int segment_end(AVFormatContext *s, int write_trailer, int is_last)
 {
     SegmentContext *seg = s->priv_data;
     AVFormatContext *oc = seg->avf;
@@ -295,12 +289,12 @@ static int segment_end(AVFormatContext *s, int write_trailer)
                 av_freep(&entry);
             }
 
-            segment_list_close(s);
+            avio_close(seg->list_pb);
             if ((ret = segment_list_open(s)) < 0)
                 goto end;
             for (entry = seg->segment_list_entries; entry; entry = entry->next)
                 segment_list_print_entry(seg->list_pb, seg->list_type, entry);
-            if (seg->list_type == LIST_TYPE_M3U8)
+            if (seg->list_type == LIST_TYPE_M3U8 && is_last)
                 avio_printf(seg->list_pb, "#EXT-X-ENDLIST\n");
         } else {
             segment_list_print_entry(seg->list_pb, seg->list_type, &seg->cur_entry);
@@ -491,7 +485,7 @@ static int select_reference_stream(AVFormatContext *s)
             ret = avformat_match_stream_specifier(s, s->streams[i],
                                                   seg->reference_stream_specifier);
             if (ret < 0)
-                break;
+                return ret;
             if (ret > 0) {
                 seg->reference_stream_index = i;
                 break;
@@ -522,13 +516,6 @@ static int seg_write_header(AVFormatContext *s)
         av_log(s, AV_LOG_ERROR,
                "segment_time, segment_times, and segment_frames options "
                "are mutually exclusive, select just one of them\n");
-        return AVERROR(EINVAL);
-    }
-
-    if ((seg->list_flags & SEGMENT_LIST_FLAG_LIVE) && (seg->times_str || seg->frames_str)) {
-        av_log(s, AV_LOG_ERROR,
-               "segment_flags +live and segment_times or segment_frames options are mutually exclusive: "
-               "specify segment_time option if you want a live-friendly list\n");
         return AVERROR(EINVAL);
     }
 
@@ -627,7 +614,7 @@ static int seg_write_header(AVFormatContext *s)
 fail:
     if (ret) {
         if (seg->list)
-            segment_list_close(s);
+            avio_close(seg->list_pb);
         if (seg->avf)
             avformat_free_context(seg->avf);
     }
@@ -664,7 +651,7 @@ static int seg_write_packet(AVFormatContext *s, AVPacket *pkt)
          (pkt->pts != AV_NOPTS_VALUE &&
           av_compare_ts(pkt->pts, st->time_base,
                         end_pts-seg->time_delta, AV_TIME_BASE_Q) >= 0))) {
-        ret = segment_end(s, seg->individual_header_trailer);
+        ret = segment_end(s, seg->individual_header_trailer, 0);
 
         if (!ret)
             ret = segment_start(s, seg->individual_header_trailer);
@@ -729,17 +716,17 @@ static int seg_write_trailer(struct AVFormatContext *s)
 
     int ret;
     if (!seg->write_header_trailer) {
-        if ((ret = segment_end(s, 0)) < 0)
+        if ((ret = segment_end(s, 0, 1)) < 0)
             goto fail;
         open_null_ctx(&oc->pb);
         ret = av_write_trailer(oc);
         close_null_ctx(oc->pb);
     } else {
-        ret = segment_end(s, 1);
+        ret = segment_end(s, 1, 1);
     }
 fail:
     if (seg->list)
-        segment_list_close(s);
+        avio_close(seg->list_pb);
 
     av_opt_free(seg);
     av_freep(&seg->times);

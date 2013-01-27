@@ -8,6 +8,7 @@ OBJS-$(CONFIG_FFT)                     += x86/fft_init.o
 OBJS-$(CONFIG_GPL)                     += x86/idct_mmx.o
 OBJS-$(CONFIG_H264DSP)                 += x86/h264dsp_init.o
 OBJS-$(CONFIG_H264PRED)                += x86/h264_intrapred_init.o
+OBJS-$(CONFIG_H264QPEL)                += x86/h264_qpel.o
 OBJS-$(CONFIG_LPC)                     += x86/lpc.o
 OBJS-$(CONFIG_MLP_DECODER)             += x86/mlpdsp.o
 OBJS-$(CONFIG_MPEGAUDIODSP)            += x86/mpegaudiodec.o
@@ -23,6 +24,7 @@ OBJS-$(CONFIG_V210_DECODER)            += x86/v210-init.o
 OBJS-$(CONFIG_TRUEHD_DECODER)          += x86/mlpdsp.o
 OBJS-$(CONFIG_VC1_DECODER)             += x86/vc1dsp_init.o
 OBJS-$(CONFIG_VIDEODSP)                += x86/videodsp_init.o
+OBJS-$(CONFIG_VORBIS_DECODER)          += x86/vorbisdsp_init.o
 OBJS-$(CONFIG_VP3DSP)                  += x86/vp3dsp_init.o
 OBJS-$(CONFIG_VP5_DECODER)             += x86/vp56dsp_init.o
 OBJS-$(CONFIG_VP6_DECODER)             += x86/vp56dsp_init.o
@@ -71,6 +73,7 @@ YASM-OBJS-$(CONFIG_RV40_DECODER)       += x86/rv34dsp.o                 \
 YASM-OBJS-$(CONFIG_V210_DECODER)       += x86/v210.o
 YASM-OBJS-$(CONFIG_VC1_DECODER)        += x86/vc1dsp.o
 YASM-OBJS-$(CONFIG_VIDEODSP)           += x86/videodsp.o
+YASM-OBJS-$(CONFIG_VORBIS_DECODER)     += x86/vorbisdsp.o
 YASM-OBJS-$(CONFIG_VP3DSP)             += x86/vp3dsp.o
 YASM-OBJS-$(CONFIG_VP6_DECODER)        += x86/vp56dsp.o
 YASM-OBJS-$(CONFIG_VP8_DECODER)        += x86/vp8dsp.o
@@ -78,3 +81,5 @@ YASM-OBJS-$(CONFIG_VP8_DECODER)        += x86/vp8dsp.o
 YASM-OBJS                              += x86/dsputil.o                 \
                                           x86/deinterlace.o             \
                                           x86/fmtconvert.o              \
+                                          x86/hpeldsp.o                 \
+                                          x86/mpeg4qpel.o               \

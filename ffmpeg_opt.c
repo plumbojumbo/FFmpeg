@@ -149,18 +149,6 @@ static void init_options(OptionsContext *o, int is_input)
     o->chapters_input_file = INT_MAX;
 }
 
-static int opt_frame_crop(void *optctx, const char *opt, const char *arg)
-{
-    av_log(NULL, AV_LOG_FATAL, "Option '%s' has been removed, use the crop filter instead\n", opt);
-    return AVERROR(EINVAL);
-}
-
-static int opt_pad(void *optctx, const char *opt, const char *arg)
-{
-    av_log(NULL, AV_LOG_FATAL, "Option '%s' has been removed, use the pad filter instead\n", opt);
-    return -1;
-}
-
 static int opt_sameq(void *optctx, const char *opt, const char *arg)
 {
     av_log(NULL, AV_LOG_ERROR, "Option '%s' was removed. "
@@ -616,6 +604,8 @@ static void add_input_streams(OptionsContext *o, AVFormatContext *ic)
 
             break;
         case AVMEDIA_TYPE_AUDIO:
+            ist->guess_layout_max = INT_MAX;
+            MATCH_PER_STREAM_OPT(guess_layout_max, i, ist->guess_layout_max, ic, st);
             guess_input_channel_layout(ist);
 
             ist->resample_sample_fmt     = dec->sample_fmt;
@@ -2297,7 +2287,7 @@ static int open_files(OptionGroupList *l, const char *inout,
                    inout, g->arg);
             return ret;
         }
-        av_log(NULL, AV_LOG_DEBUG, "Successfully openened the file.\n");
+        av_log(NULL, AV_LOG_DEBUG, "Successfully opened the file.\n");
     }
 
     return 0;
@@ -2488,24 +2478,6 @@ const OptionDef options[] = {
         "set pixel format", "format" },
     { "bits_per_raw_sample", OPT_VIDEO | OPT_INT | HAS_ARG,                      { &frame_bits_per_raw_sample },
         "set the number of bits per raw sample", "number" },
-    { "croptop",      OPT_VIDEO | HAS_ARG,                                       { .func_arg = opt_frame_crop },
-        "Removed, use the crop filter instead", "size" },
-    { "cropbottom",   OPT_VIDEO | HAS_ARG,                                       { .func_arg = opt_frame_crop },
-        "Removed, use the crop filter instead", "size" },
-    { "cropleft",     OPT_VIDEO | HAS_ARG,                                       { .func_arg = opt_frame_crop },
-        "Removed, use the crop filter instead", "size" },
-    { "cropright",    OPT_VIDEO | HAS_ARG,                                       { .func_arg = opt_frame_crop },
-        "Removed, use the crop filter instead", "size" },
-    { "padtop",       OPT_VIDEO | HAS_ARG,                                       { .func_arg = opt_pad },
-        "Removed, use the pad filter instead", "size" },
-    { "padbottom",    OPT_VIDEO | HAS_ARG,                                       { .func_arg = opt_pad },
-        "Removed, use the pad filter instead", "size" },
-    { "padleft",      OPT_VIDEO | HAS_ARG,                                       { .func_arg = opt_pad },
-        "Removed, use the pad filter instead", "size" },
-    { "padright",     OPT_VIDEO | HAS_ARG,                                       { .func_arg = opt_pad },
-        "Removed, use the pad filter instead", "size" },
-    { "padcolor",     OPT_VIDEO | HAS_ARG,                                       { .func_arg = opt_pad },
-        "Removed, use the pad filter instead", "color" },
     { "intra",        OPT_VIDEO | OPT_BOOL | OPT_EXPERT,                         { &intra_only },
         "deprecated use -g 1" },
     { "vn",           OPT_VIDEO | OPT_BOOL  | OPT_OFFSET,                        { .off = OFFSET(video_disable) },
@@ -2581,6 +2553,8 @@ const OptionDef options[] = {
         "set channel layout", "layout" },
     { "af",             OPT_AUDIO | HAS_ARG  | OPT_PERFILE,                        { .func_arg = opt_audio_filters },
         "set audio filters", "filter_graph" },
+    { "guess_layout_max", OPT_AUDIO | HAS_ARG | OPT_INT | OPT_SPEC | OPT_EXPERT,   { .off = OFFSET(guess_layout_max) },
+      "set the maximum number of channels to try to guess the channel layout" },
 
     /* subtitle options */
     { "sn",     OPT_SUBTITLE | OPT_BOOL | OPT_OFFSET, { .off = OFFSET(subtitle_disable) },

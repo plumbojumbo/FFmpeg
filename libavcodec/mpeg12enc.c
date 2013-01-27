@@ -52,7 +52,7 @@ static const uint8_t svcd_scan_offset_placeholder[14] = {
 };
 
 static void mpeg1_encode_block(MpegEncContext *s,
-                         DCTELEM *block,
+                         int16_t *block,
                          int component);
 static void mpeg1_encode_motion(MpegEncContext *s, int val, int f_or_b_code);    // RAL: f_code parameter added
 
@@ -144,6 +144,9 @@ static int find_frame_rate_index(MpegEncContext *s){
 static av_cold int encode_init(AVCodecContext *avctx)
 {
     MpegEncContext *s = avctx->priv_data;
+
+    if (avctx->codec_id == AV_CODEC_ID_MPEG1VIDEO && avctx->height > 2800)
+        avctx->thread_count = 1;
 
     if(ff_MPV_encode_init(avctx) < 0)
         return -1;
@@ -468,7 +471,7 @@ static inline void put_mb_modes(MpegEncContext *s, int n, int bits,
 }
 
 static av_always_inline void mpeg1_encode_mb_internal(MpegEncContext *s,
-                                                   DCTELEM block[6][64],
+                                                   int16_t block[6][64],
                                                    int motion_x, int motion_y,
                                                    int mb_block_count)
 {
@@ -692,7 +695,7 @@ static av_always_inline void mpeg1_encode_mb_internal(MpegEncContext *s,
     }
 }
 
-void ff_mpeg1_encode_mb(MpegEncContext *s, DCTELEM block[6][64], int motion_x, int motion_y)
+void ff_mpeg1_encode_mb(MpegEncContext *s, int16_t block[6][64], int motion_x, int motion_y)
 {
     if (s->chroma_format == CHROMA_420) mpeg1_encode_mb_internal(s, block, motion_x, motion_y, 6);
     else                                mpeg1_encode_mb_internal(s, block, motion_x, motion_y, 8);
@@ -875,7 +878,7 @@ static inline void encode_dc(MpegEncContext *s, int diff, int component)
 }
 
 static void mpeg1_encode_block(MpegEncContext *s,
-                               DCTELEM *block,
+                               int16_t *block,
                                int n)
 {
     int alevel, level, last_non_zero, dc, diff, i, j, run, last_index, sign;
